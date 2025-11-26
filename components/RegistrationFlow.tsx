@@ -20,7 +20,7 @@ interface TelegramUser {
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
 
 export default function RegistrationFlow() {
-  const [status, setStatus] = useState<'idle' | 'checking' | 'registered' | 'error'>('idle');
+  const [status, setStatus] = useState<'idle' | 'checking' | 'registered' | 'error' | 'invalid-environment'>('idle');
   const [errorMessage, setErrorMessage] = useState('');
   
   // Ref to prevent double-execution in React Strict Mode
@@ -56,7 +56,8 @@ export default function RegistrationFlow() {
         console.log("Extracted Telegram user:", tgUser);
 
         if (!tgUser) {
-           throw new Error("No user data found.");
+           setStatus('invalid-environment');
+           return;
         }
 
        
@@ -116,6 +117,20 @@ export default function RegistrationFlow() {
   }, []);
 
   // --- UI STATES ---
+
+  if (status === 'invalid-environment') {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-6 text-center">
+        <div className="bg-yellow-100 p-4 rounded-full mb-4">
+          <svg className="w-8 h-8 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+        </div>
+        <h2 className="text-xl font-bold text-gray-900 mb-2">Unsupported Environment</h2>
+        <p className="text-gray-600 mb-6 max-w-xs mx-auto">
+          This application is designed to be used inside the Telegram app. Please open it from your Telegram bot.
+        </p>
+      </div>
+    );
+  }
 
   if (status === 'checking') {
     return (
