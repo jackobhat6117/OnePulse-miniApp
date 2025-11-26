@@ -52,8 +52,29 @@ export default function RegistrationFlow() {
           throw new Error("Could not retrieve Telegram data. Please open this inside Telegram.");
         }
 
-        const tgUser = initData?.user as TelegramUser | undefined;
-        console.log("Extracted Telegram user:", tgUser);
+        // Prefer user from initData (SDK), but gracefully fall back to Telegram WebApp global
+        let tgUser = initData?.user as TelegramUser | undefined;
+
+        // Fallback: use window.Telegram.WebApp.initDataUnsafe.user if available
+        if (!tgUser && typeof window !== 'undefined') {
+          const webApp = (window as any).Telegram?.WebApp;
+          const unsafeUser = webApp?.initDataUnsafe?.user;
+          console.log("Fallback initDataUnsafe.user:", unsafeUser);
+
+          if (unsafeUser) {
+            tgUser = {
+              id: unsafeUser.id,
+              firstName: unsafeUser.first_name,
+              lastName: unsafeUser.last_name,
+              username: unsafeUser.username,
+              languageCode: unsafeUser.language_code,
+              photoUrl: unsafeUser.photo_url,
+              isPremium: unsafeUser.is_premium,
+            };
+          }
+        }
+
+        console.log("Resolved Telegram user:", tgUser);
 
         if (!tgUser) {
            setStatus('invalid-environment');
