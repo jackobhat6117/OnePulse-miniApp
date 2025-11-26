@@ -17,7 +17,7 @@ interface TelegramUser {
 }
 
 // Replace with your actual endpoint
-const BACKEND_URL = "http://172.28.22.99:8270/api/v1/customers/checkTelegramID";
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
 
 export default function RegistrationFlow() {
   const [status, setStatus] = useState<'idle' | 'checking' | 'registered' | 'error'>('idle');
@@ -27,6 +27,12 @@ export default function RegistrationFlow() {
   const hasChecked = useRef(false);
 
   useEffect(() => {
+    if (!BACKEND_URL) {
+      setStatus('error');
+      setErrorMessage('The application is not configured correctly. Please contact support.');
+      return;
+    }
+
     if (hasChecked.current) return;
     hasChecked.current = true;
 
