@@ -42,13 +42,18 @@ export default function RegistrationFlow() {
         // 1. Safely retrieve Telegram Data
         let initData: any;
         try {
+          console.log("Attempting to retrieve launch parameters...");
           const params = retrieveLaunchParams();
+          console.log("Launch parameters received:", params);
           initData = params.initData;
+          console.log("initData object:", initData);
         } catch (e) {
+          console.error("Error retrieving launch parameters:", e);
           throw new Error("Could not retrieve Telegram data. Please open this inside Telegram.");
         }
 
         const tgUser = initData?.user as TelegramUser | undefined;
+        console.log("Extracted Telegram user:", tgUser);
 
         if (!tgUser) {
            throw new Error("No user data found.");
