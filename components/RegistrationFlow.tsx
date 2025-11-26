@@ -1,0 +1,150 @@
+'use client';
+
+import { useEffect, useState, useRef } from 'react';
+import { retrieveLaunchParams } from '@telegram-apps/sdk-react';
+import { RegistrationPayload } from '@/types/user';
+
+// 1. DEFINE THE INTERFACE MANUALLY
+// This tells TypeScript exactly what to expect from the Telegram User object.
+interface TelegramUser {
+  id: number;
+  firstName: string;
+  lastName?: string;
+  username?: string;
+  languageCode?: string;
+  photoUrl?: string;
+  isPremium?: boolean;
+}
+
+// Replace with your actual endpoint
+const BACKEND_URL = "http://172.28.22.99:8270/api/v1/customers/checkTelegramID";
+
+export default function RegistrationFlow() {
+  const [status, setStatus] = useState<'idle' | 'checking' | 'registered' | 'error'>('idle');
+  const [errorMessage, setErrorMessage] = useState('');
+  
+  // Ref to prevent double-execution in React Strict Mode
+  const hasChecked = useRef(false);
+
+  useEffect(() => {
+    if (hasChecked.current) return;
+    hasChecked.current = true;
+
+    const performRegistration = async () => {
+      setStatus('checking');
+      try {
+        // 1. Safely retrieve Telegram Data
+        let initData: any;
+        try {
+          const params = retrieveLaunchParams();
+          initData = params.initData;
+        } catch (e) {
+          throw new Error("Could not retrieve Telegram data. Please open this inside Telegram.");
+        }
+
+        const tgUser = initData?.user as TelegramUser | undefined;
+
+        if (!tgUser) {
+           throw new Error("No user data found.");
+        }
+
+       
+        const payload: RegistrationPayload = {
+          allowed_financial_actions: ["ALL"],
+          customer_profile: {
+            avatar: tgUser.photoUrl || "" 
+          },
+          first_name: tgUser.firstName,
+          is_bot_user: true,
+          is_premium: tgUser.isPremium || false,
+          kyc_status: "PENDING",
+          language_code: tgUser.languageCode || "en",
+          last_name: tgUser.lastName || "",
+          phone_number: "", 
+          registration_status: "SELF",
+          telegram_id: tgUser.id,
+          username: tgUser.username || ""
+        };
+
+        console.log("Sending Payload:", payload);
+
+        // 3. Send to Backend
+        const response = await fetch(BACKEND_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Channel-Id': 'telegram',
+            'X-Timestamp': new Date().toISOString(),
+            'X-App-Version': '1.0.0'
+            // Optional: Send raw initData for backend validation if needed
+            // 'Authorization': `tma ${retrieveLaunchParams().initDataRaw}` 
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+          // Try to parse error message from backend, fallback to status text
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.message || `Server error: ${response.statusText}`);
+        }
+
+        const responseData = await response.json();
+        console.log("Registration Success:", responseData);
+        
+        // Success State
+        setStatus('registered');
+
+      } catch (err: any) {
+        console.error("Registration failed:", err);
+        setErrorMessage(err.message || "Unknown error occurred");
+        setStatus('error');
+      }
+    };
+
+    performRegistration();
+  }, []);
+
+  // --- UI STATES ---
+
+  if (status === 'checking') {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 text-gray-800">
+        <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+        <p className="font-medium animate-pulse">Verifying Account...</p>
+      </div>
+    );
+  }
+
+  if (status === 'error') {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-red-50 p-6 text-center">
+        <div className="bg-red-100 p-4 rounded-full mb-4">
+          <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+        </div>
+        <h2 className="text-xl font-bold text-gray-900 mb-2">Connection Failed</h2>
+        <p className="text-gray-600 mb-6 max-w-xs mx-auto">{errorMessage}</p>
+        <button 
+          onClick={() => window.location.reload()} 
+          className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-6 rounded-lg transition-colors"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  if (status === 'registered') {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-green-50 text-center p-6">
+        <div className="bg-green-100 p-4 rounded-full mb-4">
+          <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+        </div>
+        <h1 className="text-2xl font-bold text-gray-900">Welcome!</h1>
+        <p className="text-gray-600 mt-2">Your account has been verified.</p>
+        {/* You can auto-redirect here using router.push('/dashboard') */}
+      </div>
+    );
+  }
+
+  return null; // Idle state (rarely visible due to useEffect)
+}
