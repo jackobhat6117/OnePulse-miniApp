@@ -61,6 +61,8 @@ export default function RegistrationFlow() {
           const unsafeUser = webApp?.initDataUnsafe?.user;
           console.log("Fallback initDataUnsafe.user:", unsafeUser);
 
+          
+
           if (unsafeUser) {
             tgUser = {
               id: unsafeUser.id,
