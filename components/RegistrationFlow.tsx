@@ -178,10 +178,10 @@ export default function RegistrationFlow() {
 
         // 3. Send to Backend
         const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
-          'X-Channel-Id': 'telegram',
+          'Content-Type': "application/json",
+          'X-Channel-Id': "telegram",
           'X-Timestamp': new Date().toISOString(),
-          'X-App-Version': '1.0.0',
+          'X-App-Version': "1.0.0",
         };
 
         if (initDataRaw) {
