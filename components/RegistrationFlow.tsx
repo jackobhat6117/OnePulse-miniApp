@@ -162,7 +162,7 @@ export default function RegistrationFlow() {
           customer_profile: {
             avatar: tgUser.photoUrl || "" 
           },
-          first_name: tgUser.firstName,
+          first_name: tgUser.firstName.replace(/[^a-zA-Z]/g, '') || 'User',
           is_bot_user: true,
           is_premium: tgUser.isPremium || false,
           kyc_status: "PENDING",
