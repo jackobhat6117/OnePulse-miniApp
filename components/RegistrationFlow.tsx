@@ -72,9 +72,16 @@ const getInitDataFromUrl = (): string | undefined => {
   return undefined;
 };
 
+type DebugDetails = {
+  initDataSource?: 'sdk' | 'unsafe' | 'url';
+  initDataRawPreview?: string;
+  user?: TelegramUser;
+};
+
 export default function RegistrationFlow() {
   const [status, setStatus] = useState<'idle' | 'checking' | 'registered' | 'error' | 'invalid-environment'>('idle');
   const [errorMessage, setErrorMessage] = useState('');
+  const [debugDetails, setDebugDetails] = useState<DebugDetails | null>(null);
   
   // Ref to prevent double-execution in React Strict Mode
   const hasChecked = useRef(false);
@@ -90,7 +97,16 @@ export default function RegistrationFlow() {
     hasChecked.current = true;
 
     const performRegistration = async () => {
-      
+      // Guard against mixed-content fetches (https page -> http backend)
+      if (typeof window !== 'undefined' && window.location.protocol === 'https:' && BACKEND_URL.startsWith('http://')) {
+        setStatus('error');
+        setErrorMessage('Browser blocked the request because the backend uses http:// while the app is served over https://. Please expose the API over HTTPS or proxy it.');
+        setDebugDetails({
+          initDataRawPreview: undefined,
+        });
+        return;
+      }
+
       setStatus('checking');
       try {
         // 1. Safely retrieve Telegram Data
@@ -110,28 +126,44 @@ export default function RegistrationFlow() {
 
         // Prefer user from initData (SDK), but gracefully fall back to Telegram WebApp global
         let tgUser = initData?.user as TelegramUser | undefined;
+        let initSource: DebugDetails['initDataSource'] = tgUser ? 'sdk' : undefined;
 
         // Fallback: use window.Telegram.WebApp data or tgWebAppData URL param
         if (typeof window !== 'undefined') {
           const webApp = (window as any).Telegram?.WebApp;
           const unsafeUser = webApp?.initDataUnsafe?.user as UnsafeTelegramUser;
           console.log("Fallback initDataUnsafe.user:", unsafeUser);
-          tgUser = tgUser ?? mapUnsafeUser(unsafeUser);
-          initDataRaw = initDataRaw ?? webApp?.initData;
+          if (!tgUser) {
+            const mapped = mapUnsafeUser(unsafeUser);
+            if (mapped) {
+              tgUser = mapped;
+              initSource = 'unsafe';
+            }
+          }
+          initDataRaw = initDataRaw ?? (typeof webApp?.initData === 'string' ? webApp?.initData : undefined);
 
           if (!tgUser) {
             const urlInitData = getInitDataFromUrl();
             console.log("Parsing tgWebAppData from URL:", urlInitData);
-            tgUser = parseUserFromInitDataString(urlInitData);
+            const parsed = parseUserFromInitDataString(urlInitData);
+            if (parsed) {
+              tgUser = parsed;
+              initSource = 'url';
+            }
             initDataRaw = initDataRaw ?? urlInitData;
           }
         }
 
         console.log("Resolved Telegram user:", tgUser);
+        setDebugDetails({
+          user: tgUser,
+          initDataSource: initSource,
+          initDataRawPreview: initDataRaw ? `${initDataRaw.slice(0, 80)}...` : undefined,
+        });
 
         if (!tgUser) {
-           setStatus('invalid-environment');
-           return;
+          setStatus('invalid-environment');
+          return;
         }
 
        
@@ -206,6 +238,19 @@ export default function RegistrationFlow() {
         <p className="text-gray-600 mb-6 max-w-xs mx-auto">
           This application is designed to be used inside the Telegram app. Please open it from your Telegram bot.
         </p>
+        {debugDetails && (
+          <div className="mt-4 text-sm text-gray-500 bg-gray-100 rounded-md p-4 w-full max-w-sm">
+            <p className="font-semibold mb-1">Debug info</p>
+            <p>initData source: {debugDetails.initDataSource ?? 'none'}</p>
+            <p>User detected: {debugDetails.user ? 'yes' : 'no'}</p>
+            {debugDetails.user && (
+              <>
+                <p>ID: {debugDetails.user.id}</p>
+                <p>Username: {debugDetails.user.username || '(none)'}</p>
+              </>
+            )}
+          </div>
+        )}
       </div>
     );
   }
@@ -227,6 +272,23 @@ export default function RegistrationFlow() {
         </div>
         <h2 className="text-xl font-bold text-gray-900 mb-2">Connection Failed</h2>
         <p className="text-gray-600 mb-6 max-w-xs mx-auto">{errorMessage}</p>
+        {debugDetails && (
+          <div className="mt-4 text-sm text-gray-500 bg-gray-100 rounded-md p-4 w-full max-w-sm">
+            <p className="font-semibold mb-1">Debug info</p>
+            <p>initData source: {debugDetails.initDataSource ?? 'unknown'}</p>
+            {debugDetails.user && (
+              <>
+                <p>ID: {debugDetails.user.id}</p>
+                <p>Username: {debugDetails.user.username || '(none)'}</p>
+              </>
+            )}
+            {debugDetails.initDataRawPreview && (
+              <p className="mt-1 break-all">
+                initData preview: {debugDetails.initDataRawPreview}
+              </p>
+            )}
+          </div>
+        )}
         <button 
           onClick={() => window.location.reload()} 
           className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-6 rounded-lg transition-colors"
