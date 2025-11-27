@@ -159,9 +159,9 @@ export default function RegistrationFlow() {
        
         const payload: RegistrationPayload = {
           allowed_financial_actions: ["ALL"],
-          customer_profile: {
-            avatar: tgUser.photoUrl || "" 
-          },
+          customer_profile: tgUser.photoUrl
+            ? { avatar: tgUser.photoUrl }
+            : { avatar: '' },
           first_name: tgUser.firstName.replace(/[^a-zA-Z]/g, '') || 'User',
           is_bot_user: true,
           is_premium: tgUser.isPremium || false,
