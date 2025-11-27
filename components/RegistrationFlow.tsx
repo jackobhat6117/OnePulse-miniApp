@@ -19,6 +19,59 @@ interface TelegramUser {
 // Replace with your actual endpoint
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
 
+type UnsafeTelegramUser = {
+  id: number;
+  first_name: string;
+  last_name?: string;
+  username?: string;
+  language_code?: string;
+  photo_url?: string;
+  is_premium?: boolean;
+} | undefined;
+
+const mapUnsafeUser = (unsafeUser: UnsafeTelegramUser): TelegramUser | undefined => {
+  if (!unsafeUser) return undefined;
+  return {
+    id: unsafeUser.id,
+    firstName: unsafeUser.first_name,
+    lastName: unsafeUser.last_name,
+    username: unsafeUser.username,
+    languageCode: unsafeUser.language_code,
+    photoUrl: unsafeUser.photo_url,
+    isPremium: unsafeUser.is_premium,
+  };
+};
+
+const parseUserFromInitDataString = (initDataString?: string | null): TelegramUser | undefined => {
+  if (!initDataString) return undefined;
+  try {
+    const params = new URLSearchParams(initDataString);
+    const userPayload = params.get('user');
+    if (!userPayload) return undefined;
+    const unsafeUser = JSON.parse(userPayload);
+    return mapUnsafeUser(unsafeUser);
+  } catch (error) {
+    console.warn("Failed to parse user from init data string:", error);
+    return undefined;
+  }
+};
+
+const getInitDataFromUrl = (): string | undefined => {
+  if (typeof window === 'undefined') return undefined;
+  try {
+    const currentUrl = new URL(window.location.href);
+    const searchParam = currentUrl.searchParams.get('tgWebAppData');
+    if (searchParam) return decodeURIComponent(searchParam);
+
+    if (currentUrl.hash.startsWith('#tgWebAppData=')) {
+      return decodeURIComponent(currentUrl.hash.replace('#tgWebAppData=', ''));
+    }
+  } catch (error) {
+    console.warn("Unable to read tgWebAppData param:", error);
+  }
+  return undefined;
+};
+
 export default function RegistrationFlow() {
   const [status, setStatus] = useState<'idle' | 'checking' | 'registered' | 'error' | 'invalid-environment'>('idle');
   const [errorMessage, setErrorMessage] = useState('');
@@ -37,15 +90,18 @@ export default function RegistrationFlow() {
     hasChecked.current = true;
 
     const performRegistration = async () => {
+      
       setStatus('checking');
       try {
         // 1. Safely retrieve Telegram Data
         let initData: any;
+        let initDataRaw: string | undefined;
         try {
           console.log("Attempting to retrieve launch parameters...");
           const params = retrieveLaunchParams();
           console.log("Launch parameters received:", params);
           initData = params.initData;
+          initDataRaw = typeof params.initDataRaw === 'string' ? params.initDataRaw : undefined;
           console.log("initData object:", initData);
         } catch (e) {
           console.error("Error retrieving launch parameters:", e);
@@ -55,24 +111,19 @@ export default function RegistrationFlow() {
         // Prefer user from initData (SDK), but gracefully fall back to Telegram WebApp global
         let tgUser = initData?.user as TelegramUser | undefined;
 
-        // Fallback: use window.Telegram.WebApp.initDataUnsafe.user if available
-        if (!tgUser && typeof window !== 'undefined') {
+        // Fallback: use window.Telegram.WebApp data or tgWebAppData URL param
+        if (typeof window !== 'undefined') {
           const webApp = (window as any).Telegram?.WebApp;
-          const unsafeUser = webApp?.initDataUnsafe?.user;
+          const unsafeUser = webApp?.initDataUnsafe?.user as UnsafeTelegramUser;
           console.log("Fallback initDataUnsafe.user:", unsafeUser);
+          tgUser = tgUser ?? mapUnsafeUser(unsafeUser);
+          initDataRaw = initDataRaw ?? webApp?.initData;
 
-          
-
-          if (unsafeUser) {
-            tgUser = {
-              id: unsafeUser.id,
-              firstName: unsafeUser.first_name,
-              lastName: unsafeUser.last_name,
-              username: unsafeUser.username,
-              languageCode: unsafeUser.language_code,
-              photoUrl: unsafeUser.photo_url,
-              isPremium: unsafeUser.is_premium,
-            };
+          if (!tgUser) {
+            const urlInitData = getInitDataFromUrl();
+            console.log("Parsing tgWebAppData from URL:", urlInitData);
+            tgUser = parseUserFromInitDataString(urlInitData);
+            initDataRaw = initDataRaw ?? urlInitData;
           }
         }
 
@@ -104,16 +155,20 @@ export default function RegistrationFlow() {
         console.log("Sending Payload:", payload);
 
         // 3. Send to Backend
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+          'X-Channel-Id': 'telegram',
+          'X-Timestamp': new Date().toISOString(),
+          'X-App-Version': '1.0.0',
+        };
+
+        if (initDataRaw) {
+          headers['X-Telegram-Init'] = initDataRaw;
+        }
+
         const response = await fetch(BACKEND_URL, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Channel-Id': 'telegram',
-            'X-Timestamp': new Date().toISOString(),
-            'X-App-Version': '1.0.0'
-            // Optional: Send raw initData for backend validation if needed
-            // 'Authorization': `tma ${retrieveLaunchParams().initDataRaw}` 
-          },
+          headers,
           body: JSON.stringify(payload),
         });
 

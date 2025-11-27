@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { TelegramInitializer } from "@/components/TelegramInitializer";
@@ -29,11 +30,13 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-       <TelegramInitializer>
-
+        <Script
+          src="https://telegram.org/js/telegram-web-app.js"
+          strategy="beforeInteractive"
+        />
+        <TelegramInitializer>
           {children}
-       </TelegramInitializer>
-        
+        </TelegramInitializer>
       </body>
     </html>
   );
