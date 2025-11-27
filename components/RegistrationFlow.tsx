@@ -17,7 +17,21 @@ interface TelegramUser {
 }
 
 // Replace with your actual endpoint
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
+const RAW_BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
+
+const parsedBackendUrl = (() => {
+  if (!RAW_BACKEND_URL) return undefined;
+  try {
+    return new URL(RAW_BACKEND_URL);
+  } catch (error) {
+    console.error("Invalid NEXT_PUBLIC_BACKEND_URL:", error);
+    return undefined;
+  }
+})();
+
+const BACKEND_PROXY_ENDPOINT = parsedBackendUrl
+  ? `/api/proxy${parsedBackendUrl.pathname}${parsedBackendUrl.search}`
+  : undefined;
 
 type UnsafeTelegramUser = {
   id: number;
@@ -87,9 +101,9 @@ export default function RegistrationFlow() {
   const hasChecked = useRef(false);
 
   useEffect(() => {
-    if (!BACKEND_URL) {
+    if (!BACKEND_PROXY_ENDPOINT) {
       setStatus('error');
-      setErrorMessage('The application is not configured correctly. Please contact support.');
+      setErrorMessage('The backend URL is not configured correctly. Please check NEXT_PUBLIC_BACKEND_URL.');
       return;
     }
 
@@ -97,16 +111,6 @@ export default function RegistrationFlow() {
     hasChecked.current = true;
 
     const performRegistration = async () => {
-      // Guard against mixed-content fetches (https page -> http backend)
-      if (typeof window !== 'undefined' && window.location.protocol === 'https:' && BACKEND_URL.startsWith('http://')) {
-        setStatus('error');
-        setErrorMessage('Browser blocked the request because the backend uses http:// while the app is served over https://. Please expose the API over HTTPS or proxy it.');
-        setDebugDetails({
-          initDataRawPreview: undefined,
-        });
-        return;
-      }
-
       setStatus('checking');
       try {
         // 1. Safely retrieve Telegram Data
@@ -198,7 +202,7 @@ export default function RegistrationFlow() {
           headers['X-Telegram-Init'] = initDataRaw;
         }
 
-        const response = await fetch(BACKEND_URL, {
+        const response = await fetch(BACKEND_PROXY_ENDPOINT, {
           method: 'POST',
           headers,
           body: JSON.stringify(payload),
