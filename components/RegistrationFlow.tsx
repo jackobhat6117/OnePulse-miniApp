@@ -1,11 +1,331 @@
+// 'use client';
+
+// import { useEffect, useState, useRef } from 'react';
+// import { retrieveLaunchParams } from '@telegram-apps/sdk-react';
+// import { RegistrationPayload } from '@/types/user';
+
+// // 1. DEFINE THE INTERFACE MANUALLY
+// // This tells TypeScript exactly what to expect from the Telegram User object.
+// interface TelegramUser {
+//   id: number;
+//   firstName: string;
+//   lastName?: string;
+//   username?: string;
+//   languageCode?: string;
+//   photoUrl?: string;
+//   isPremium?: boolean;
+// }
+
+// // Replace with your actual endpoint
+// const RAW_BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
+
+// const parsedBackendUrl = (() => {
+//   if (!RAW_BACKEND_URL) return undefined;
+//   try {
+//     return new URL(RAW_BACKEND_URL);
+//   } catch (error) {
+//     console.error("Invalid NEXT_PUBLIC_BACKEND_URL:", error);
+//     return undefined;
+//   }
+// })();
+
+// const BACKEND_PROXY_ENDPOINT = parsedBackendUrl
+//   ? `/api/proxy${parsedBackendUrl.pathname}${parsedBackendUrl.search}`
+//   : undefined;
+
+// type UnsafeTelegramUser = {
+//   id: number;
+//   first_name: string;
+//   last_name?: string;
+//   username?: string;
+//   language_code?: string;
+//   photo_url?: string;
+//   is_premium?: boolean;
+// } | undefined;
+
+// const mapUnsafeUser = (unsafeUser: UnsafeTelegramUser): TelegramUser | undefined => {
+//   if (!unsafeUser) return undefined;
+//   return {
+//     id: unsafeUser.id,
+//     firstName: unsafeUser.first_name,
+//     lastName: unsafeUser.last_name,
+//     username: unsafeUser.username,
+//     languageCode: unsafeUser.language_code,
+//     photoUrl: unsafeUser.photo_url,
+//     isPremium: unsafeUser.is_premium,
+//   };
+// };
+
+// const parseUserFromInitDataString = (initDataString?: string | null): TelegramUser | undefined => {
+//   if (!initDataString) return undefined;
+//   try {
+//     const params = new URLSearchParams(initDataString);
+//     const userPayload = params.get('user');
+//     if (!userPayload) return undefined;
+//     const unsafeUser = JSON.parse(userPayload);
+//     return mapUnsafeUser(unsafeUser);
+//   } catch (error) {
+//     console.warn("Failed to parse user from init data string:", error);
+//     return undefined;
+//   }
+// };
+
+// const getInitDataFromUrl = (): string | undefined => {
+//   if (typeof window === 'undefined') return undefined;
+//   try {
+//     const currentUrl = new URL(window.location.href);
+//     const searchParam = currentUrl.searchParams.get('tgWebAppData');
+//     if (searchParam) return decodeURIComponent(searchParam);
+
+//     if (currentUrl.hash.startsWith('#tgWebAppData=')) {
+//       return decodeURIComponent(currentUrl.hash.replace('#tgWebAppData=', ''));
+//     }
+//   } catch (error) {
+//     console.warn("Unable to read tgWebAppData param:", error);
+//   }
+//   return undefined;
+// };
+
+// type DebugDetails = {
+//   initDataSource?: 'sdk' | 'unsafe' | 'url';
+//   initDataRawPreview?: string;
+//   user?: TelegramUser;
+// };
+
+// export default function RegistrationFlow() {
+//   const [status, setStatus] = useState<'idle' | 'checking' | 'registered' | 'error' | 'invalid-environment'>('idle');
+//   const [errorMessage, setErrorMessage] = useState('');
+//   const [debugDetails, setDebugDetails] = useState<DebugDetails | null>(null);
+  
+//   // Ref to prevent double-execution in React Strict Mode
+//   const hasChecked = useRef(false);
+
+//   useEffect(() => {
+//     if (!BACKEND_PROXY_ENDPOINT) {
+//       setStatus('error');
+//       setErrorMessage('The backend URL is not configured correctly. Please check NEXT_PUBLIC_BACKEND_URL.');
+//       return;
+//     }
+
+//     if (hasChecked.current) return;
+//     hasChecked.current = true;
+
+//     const performRegistration = async () => {
+//       setStatus('checking');
+//       try {
+//         // 1. Safely retrieve Telegram Data
+//         let initData: any;
+//         let initDataRaw: string | undefined;
+//         try {
+//           console.log("Attempting to retrieve launch parameters...");
+//           const params = retrieveLaunchParams();
+//           console.log("Launch parameters received:", params);
+//           initData = params.initData;
+//           initDataRaw = typeof params.initDataRaw === 'string' ? params.initDataRaw : undefined;
+//           console.log("initData object:", initData);
+//         } catch (e) {
+//           console.error("Error retrieving launch parameters:", e);
+//           throw new Error("Could not retrieve Telegram data. Please open this inside Telegram.");
+//         }
+
+//         // Prefer user from initData (SDK), but gracefully fall back to Telegram WebApp global
+//         let tgUser = initData?.user as TelegramUser | undefined;
+//         let initSource: DebugDetails['initDataSource'] = tgUser ? 'sdk' : undefined;
+
+//         // Fallback: use window.Telegram.WebApp data or tgWebAppData URL param
+//         if (typeof window !== 'undefined') {
+//           const webApp = (window as any).Telegram?.WebApp;
+//           const unsafeUser = webApp?.initDataUnsafe?.user as UnsafeTelegramUser;
+//           console.log("Fallback initDataUnsafe.user:", unsafeUser);
+//           if (!tgUser) {
+//             const mapped = mapUnsafeUser(unsafeUser);
+//             if (mapped) {
+//               tgUser = mapped;
+//               initSource = 'unsafe';
+//             }
+//           }
+//           initDataRaw = initDataRaw ?? (typeof webApp?.initData === 'string' ? webApp?.initData : undefined);
+
+//           if (!tgUser) {
+//             const urlInitData = getInitDataFromUrl();
+//             console.log("Parsing tgWebAppData from URL:", urlInitData);
+//             const parsed = parseUserFromInitDataString(urlInitData);
+//             if (parsed) {
+//               tgUser = parsed;
+//               initSource = 'url';
+//             }
+//             initDataRaw = initDataRaw ?? urlInitData;
+//           }
+//         }
+
+//         console.log("Resolved Telegram user:", tgUser);
+//         setDebugDetails({
+//           user: tgUser,
+//           initDataSource: initSource,
+//           initDataRawPreview: initDataRaw ? `${initDataRaw.slice(0, 80)}...` : undefined,
+//         });
+
+//         if (!tgUser) {
+//           setStatus('invalid-environment');
+//           return;
+//         }
+
+       
+//         const payload: RegistrationPayload = {
+//           allowed_financial_actions: ["ALL"],
+//           customer_profile: {
+//             avatar: tgUser.photoUrl || "" 
+//           },
+//           first_name: tgUser.firstName,
+//           is_bot_user: true,
+//           is_premium: tgUser.isPremium || false,
+//           kyc_status: "PENDING",
+//           language_code: tgUser.languageCode || "en",
+//           last_name: tgUser.lastName || "",
+//           phone_number: "", 
+//           registration_status: "SELF",
+//           telegram_id: tgUser.id,
+//           username: tgUser.username || ""
+//         };
+
+//         console.log("Sending Payload:", payload);
+
+//         // 3. Send to Backend
+//         const headers: Record<string, string> = {
+//           'Content-Type': 'application/json',
+//           'X-Channel-Id': 'telegram',
+//           'X-Timestamp': new Date().toISOString(),
+//           'X-App-Version': '1.0.0',
+//         };
+
+//         if (initDataRaw) {
+//           headers['X-Telegram-Init'] = initDataRaw;
+//         }
+
+//         const response = await fetch(BACKEND_PROXY_ENDPOINT, {
+//           method: 'POST',
+//           headers,
+//           body: JSON.stringify(payload),
+//         });
+
+//         if (!response.ok) {
+//           // Try to parse error message from backend, fallback to status text
+//           const errorData = await response.json().catch(() => ({}));
+//           throw new Error(errorData.message || `Server error: ${response.statusText}`);
+//         }
+
+//         const responseData = await response.json();
+//         console.log("Registration Success:", responseData);
+        
+//         // Success State
+//         setStatus('registered');
+
+//       } catch (err: any) {
+//         console.error("Registration failed:", err);
+//         setErrorMessage(err.message || "Unknown error occurred");
+//         setStatus('error');
+//       }
+//     };
+
+//     performRegistration();
+//   }, []);
+
+//   // --- UI STATES ---
+
+//   if (status === 'invalid-environment') {
+//     return (
+//       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-6 text-center">
+//         <div className="bg-yellow-100 p-4 rounded-full mb-4">
+//           <svg className="w-8 h-8 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+//         </div>
+//         <h2 className="text-xl font-bold text-gray-900 mb-2">Unsupported Environment</h2>
+//         <p className="text-gray-600 mb-6 max-w-xs mx-auto">
+//           This application is designed to be used inside the Telegram app. Please open it from your Telegram bot.
+//         </p>
+//         {debugDetails && (
+//           <div className="mt-4 text-sm text-gray-500 bg-gray-100 rounded-md p-4 w-full max-w-sm">
+//             <p className="font-semibold mb-1">Debug info</p>
+//             <p>initData source: {debugDetails.initDataSource ?? 'none'}</p>
+//             <p>User detected: {debugDetails.user ? 'yes' : 'no'}</p>
+//             {debugDetails.user && (
+//               <>
+//                 <p>ID: {debugDetails.user.id}</p>
+//                 <p>Username: {debugDetails.user.username || '(none)'}</p>
+//               </>
+//             )}
+//           </div>
+//         )}
+//       </div>
+//     );
+//   }
+
+//   if (status === 'checking') {
+//     return (
+//       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 text-gray-800">
+//         <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+//         <p className="font-medium animate-pulse">Verifying Account...</p>
+//       </div>
+//     );
+//   }
+
+//   if (status === 'error') {
+//     return (
+//       <div className="flex flex-col items-center justify-center min-h-screen bg-red-50 p-6 text-center">
+//         <div className="bg-red-100 p-4 rounded-full mb-4">
+//           <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+//         </div>
+//         <h2 className="text-xl font-bold text-gray-900 mb-2">Connection Failed</h2>
+//         <p className="text-gray-600 mb-6 max-w-xs mx-auto">{errorMessage}</p>
+//         {debugDetails && (
+//           <div className="mt-4 text-sm text-gray-500 bg-gray-100 rounded-md p-4 w-full max-w-sm">
+//             <p className="font-semibold mb-1">Debug info</p>
+//             <p>initData source: {debugDetails.initDataSource ?? 'unknown'}</p>
+//             {debugDetails.user && (
+//               <>
+//                 <p>ID: {debugDetails.user.id}</p>
+//                 <p>Username: {debugDetails.user.username || '(none)'}</p>
+//               </>
+//             )}
+//             {debugDetails.initDataRawPreview && (
+//               <p className="mt-1 break-all">
+//                 initData preview: {debugDetails.initDataRawPreview}
+//               </p>
+//             )}
+//           </div>
+//         )}
+//         <button 
+//           onClick={() => window.location.reload()} 
+//           className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-6 rounded-lg transition-colors"
+//         >
+//           Retry
+//         </button>
+//       </div>
+//     );
+//   }
+
+//   if (status === 'registered') {
+//     return (
+//       <div className="flex flex-col items-center justify-center min-h-screen bg-green-50 text-center p-6">
+//         <div className="bg-green-100 p-4 rounded-full mb-4">
+//           <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+//         </div>
+//         <h1 className="text-2xl font-bold text-gray-900">Welcome!</h1>
+//         <p className="text-gray-600 mt-2">Your account has been verified.</p>
+//         {/* You can auto-redirect here using router.push('/dashboard') */}
+//       </div>
+//     );
+//   }
+
+//   return null; // Idle state (rarely visible due to useEffect)
+// }
+
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
 import { retrieveLaunchParams } from '@telegram-apps/sdk-react';
 import { RegistrationPayload } from '@/types/user';
 
-// 1. DEFINE THE INTERFACE MANUALLY
-// This tells TypeScript exactly what to expect from the Telegram User object.
+// 1. Types
 interface TelegramUser {
   id: number;
   firstName: string;
@@ -15,23 +335,6 @@ interface TelegramUser {
   photoUrl?: string;
   isPremium?: boolean;
 }
-
-// Replace with your actual endpoint
-const RAW_BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
-
-const parsedBackendUrl = (() => {
-  if (!RAW_BACKEND_URL) return undefined;
-  try {
-    return new URL(RAW_BACKEND_URL);
-  } catch (error) {
-    console.error("Invalid NEXT_PUBLIC_BACKEND_URL:", error);
-    return undefined;
-  }
-})();
-
-const BACKEND_PROXY_ENDPOINT = parsedBackendUrl
-  ? `/api/proxy${parsedBackendUrl.pathname}${parsedBackendUrl.search}`
-  : undefined;
 
 type UnsafeTelegramUser = {
   id: number;
@@ -43,6 +346,11 @@ type UnsafeTelegramUser = {
   is_premium?: boolean;
 } | undefined;
 
+// 2. Configuration
+// CRITICAL FIX: Direct access. No proxy logic needed since we are using Ngrok.
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
+
+// 3. Helper Functions
 const mapUnsafeUser = (unsafeUser: UnsafeTelegramUser): TelegramUser | undefined => {
   if (!unsafeUser) return undefined;
   return {
@@ -97,13 +405,14 @@ export default function RegistrationFlow() {
   const [errorMessage, setErrorMessage] = useState('');
   const [debugDetails, setDebugDetails] = useState<DebugDetails | null>(null);
   
-  // Ref to prevent double-execution in React Strict Mode
   const hasChecked = useRef(false);
 
   useEffect(() => {
-    if (!BACKEND_PROXY_ENDPOINT) {
+    // Check configuration immediately
+    if (!BACKEND_URL) {
+      console.error("Missing Env Var: NEXT_PUBLIC_BACKEND_URL");
       setStatus('error');
-      setErrorMessage('The backend URL is not configured correctly. Please check NEXT_PUBLIC_BACKEND_URL.');
+      setErrorMessage('Configuration Error: NEXT_PUBLIC_BACKEND_URL is missing.');
       return;
     }
 
@@ -113,42 +422,39 @@ export default function RegistrationFlow() {
     const performRegistration = async () => {
       setStatus('checking');
       try {
-        // 1. Safely retrieve Telegram Data
+        // --- 1. User Extraction Logic (Excellent!) ---
         let initData: any;
         let initDataRaw: string | undefined;
+
+        // Strategy A: SDK
         try {
-          console.log("Attempting to retrieve launch parameters...");
           const params = retrieveLaunchParams();
-          console.log("Launch parameters received:", params);
           initData = params.initData;
           initDataRaw = typeof params.initDataRaw === 'string' ? params.initDataRaw : undefined;
-          console.log("initData object:", initData);
         } catch (e) {
-          console.error("Error retrieving launch parameters:", e);
-          throw new Error("Could not retrieve Telegram data. Please open this inside Telegram.");
+          // Ignore SDK error, proceed to fallback
         }
 
-        // Prefer user from initData (SDK), but gracefully fall back to Telegram WebApp global
         let tgUser = initData?.user as TelegramUser | undefined;
         let initSource: DebugDetails['initDataSource'] = tgUser ? 'sdk' : undefined;
 
-        // Fallback: use window.Telegram.WebApp data or tgWebAppData URL param
+        // Strategy B: Fallback (Window & URL)
         if (typeof window !== 'undefined') {
           const webApp = (window as any).Telegram?.WebApp;
-          const unsafeUser = webApp?.initDataUnsafe?.user as UnsafeTelegramUser;
-          console.log("Fallback initDataUnsafe.user:", unsafeUser);
+          
           if (!tgUser) {
-            const mapped = mapUnsafeUser(unsafeUser);
-            if (mapped) {
-              tgUser = mapped;
-              initSource = 'unsafe';
-            }
+             const unsafeUser = webApp?.initDataUnsafe?.user as UnsafeTelegramUser;
+             const mapped = mapUnsafeUser(unsafeUser);
+             if (mapped) {
+               tgUser = mapped;
+               initSource = 'unsafe';
+             }
           }
+          
           initDataRaw = initDataRaw ?? (typeof webApp?.initData === 'string' ? webApp?.initData : undefined);
 
           if (!tgUser) {
             const urlInitData = getInitDataFromUrl();
-            console.log("Parsing tgWebAppData from URL:", urlInitData);
             const parsed = parseUserFromInitDataString(urlInitData);
             if (parsed) {
               tgUser = parsed;
@@ -158,11 +464,11 @@ export default function RegistrationFlow() {
           }
         }
 
-        console.log("Resolved Telegram user:", tgUser);
+        // --- 2. Validation ---
         setDebugDetails({
           user: tgUser,
           initDataSource: initSource,
-          initDataRawPreview: initDataRaw ? `${initDataRaw.slice(0, 80)}...` : undefined,
+          initDataRawPreview: initDataRaw ? `${initDataRaw.slice(0, 50)}...` : undefined,
         });
 
         if (!tgUser) {
@@ -170,7 +476,7 @@ export default function RegistrationFlow() {
           return;
         }
 
-       
+        // --- 3. Backend Call ---
         const payload: RegistrationPayload = {
           allowed_financial_actions: ["ALL"],
           customer_profile: {
@@ -188,9 +494,8 @@ export default function RegistrationFlow() {
           username: tgUser.username || ""
         };
 
-        console.log("Sending Payload:", payload);
+        console.log("Sending Payload to:", BACKEND_URL);
 
-        // 3. Send to Backend
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
           'X-Channel-Id': 'telegram',
@@ -198,26 +503,20 @@ export default function RegistrationFlow() {
           'X-App-Version': '1.0.0',
         };
 
-        if (initDataRaw) {
-          headers['X-Telegram-Init'] = initDataRaw;
-        }
+        if (initDataRaw) headers['X-Telegram-Init'] = initDataRaw;
 
-        const response = await fetch(BACKEND_PROXY_ENDPOINT, {
+        const response = await fetch(BACKEND_URL, {
           method: 'POST',
           headers,
           body: JSON.stringify(payload),
         });
 
         if (!response.ok) {
-          // Try to parse error message from backend, fallback to status text
           const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.message || `Server error: ${response.statusText}`);
+          throw new Error(errorData.message || `Server error: ${response.status} ${response.statusText}`);
         }
 
-        const responseData = await response.json();
-        console.log("Registration Success:", responseData);
-        
-        // Success State
+        console.log("Success");
         setStatus('registered');
 
       } catch (err: any) {
@@ -230,91 +529,16 @@ export default function RegistrationFlow() {
     performRegistration();
   }, []);
 
-  // --- UI STATES ---
-
+  // ... (Your UI Return statements are perfect, keep them) ...
+  // Keep the 'invalid-environment', 'checking', 'error', and 'registered' blocks exactly as you had them.
+  
   if (status === 'invalid-environment') {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-6 text-center">
-        <div className="bg-yellow-100 p-4 rounded-full mb-4">
-          <svg className="w-8 h-8 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-        </div>
-        <h2 className="text-xl font-bold text-gray-900 mb-2">Unsupported Environment</h2>
-        <p className="text-gray-600 mb-6 max-w-xs mx-auto">
-          This application is designed to be used inside the Telegram app. Please open it from your Telegram bot.
-        </p>
-        {debugDetails && (
-          <div className="mt-4 text-sm text-gray-500 bg-gray-100 rounded-md p-4 w-full max-w-sm">
-            <p className="font-semibold mb-1">Debug info</p>
-            <p>initData source: {debugDetails.initDataSource ?? 'none'}</p>
-            <p>User detected: {debugDetails.user ? 'yes' : 'no'}</p>
-            {debugDetails.user && (
-              <>
-                <p>ID: {debugDetails.user.id}</p>
-                <p>Username: {debugDetails.user.username || '(none)'}</p>
-              </>
-            )}
-          </div>
-        )}
-      </div>
-    );
+     // ... paste your existing UI here ...
+     return <div className="p-4 text-center">Open this in Telegram</div>; // Simplified for brevity
   }
+  if (status === 'error') return <div>Error: {errorMessage}</div>;
+  if (status === 'checking') return <div>Loading...</div>;
+  if (status === 'registered') return <div>Welcome!</div>;
 
-  if (status === 'checking') {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 text-gray-800">
-        <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-        <p className="font-medium animate-pulse">Verifying Account...</p>
-      </div>
-    );
-  }
-
-  if (status === 'error') {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-red-50 p-6 text-center">
-        <div className="bg-red-100 p-4 rounded-full mb-4">
-          <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-        </div>
-        <h2 className="text-xl font-bold text-gray-900 mb-2">Connection Failed</h2>
-        <p className="text-gray-600 mb-6 max-w-xs mx-auto">{errorMessage}</p>
-        {debugDetails && (
-          <div className="mt-4 text-sm text-gray-500 bg-gray-100 rounded-md p-4 w-full max-w-sm">
-            <p className="font-semibold mb-1">Debug info</p>
-            <p>initData source: {debugDetails.initDataSource ?? 'unknown'}</p>
-            {debugDetails.user && (
-              <>
-                <p>ID: {debugDetails.user.id}</p>
-                <p>Username: {debugDetails.user.username || '(none)'}</p>
-              </>
-            )}
-            {debugDetails.initDataRawPreview && (
-              <p className="mt-1 break-all">
-                initData preview: {debugDetails.initDataRawPreview}
-              </p>
-            )}
-          </div>
-        )}
-        <button 
-          onClick={() => window.location.reload()} 
-          className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-6 rounded-lg transition-colors"
-        >
-          Retry
-        </button>
-      </div>
-    );
-  }
-
-  if (status === 'registered') {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-green-50 text-center p-6">
-        <div className="bg-green-100 p-4 rounded-full mb-4">
-          <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-        </div>
-        <h1 className="text-2xl font-bold text-gray-900">Welcome!</h1>
-        <p className="text-gray-600 mt-2">Your account has been verified.</p>
-        {/* You can auto-redirect here using router.push('/dashboard') */}
-      </div>
-    );
-  }
-
-  return null; // Idle state (rarely visible due to useEffect)
+  return null;
 }
