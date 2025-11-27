@@ -188,7 +188,7 @@ export default function RegistrationFlow() {
           headers['X-Telegram-Init'] = initDataRaw;
         }
 
-        const response = await fetch('/api/proxy/v1/user/profile', {
+        const response = await fetch(`${BACKEND_URL}/api/v1/customers/checkTelegramID`, {
           method: 'POST',
           headers,
           body: JSON.stringify(payload),
