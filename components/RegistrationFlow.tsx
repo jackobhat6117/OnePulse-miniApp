@@ -16,8 +16,7 @@ interface TelegramUser {
   isPremium?: boolean;
 }
 
-// --- PAYLOAD INTERFACES ---
-
+// API Payloads
 interface CheckIdPayload {
   allowed_financial_actions: string[];
   customer_profile: { avatar: string };
@@ -44,27 +43,23 @@ interface DeviceSessionPayload {
   telegram_id: string;
 }
 
-// 1. SIM Verify Payload
 interface SimVerifyPayload {
   device_fingerprint: string;
   phone_number: string;
-  telegram_id: string; // Using string to be safe, matches your example "7082..."
-}
-
-// 2. Verify Code Payload
-interface VerifyCodePayload {
-  activation_code: string;
-  phone_number: string; // Corrected from "phone_numbe"
   telegram_id: string;
 }
 
-// 3. Resend Code Payload
+interface VerifyCodePayload {
+  activation_code: string;
+  phone_number: string;
+  telegram_id: string;
+}
+
 interface ResendCodePayload {
   phone_number: string;
   telegram_id: string;
 }
 
-// 4. Verify Customer Payload
 interface VerifyCustomerPayload {
   account_number: string;
   device_id: string;
@@ -72,21 +67,18 @@ interface VerifyCustomerPayload {
   telegram_id: string;
 }
 
-// --- APP STATUS ---
-
+// App Flow Status
 type AppStatus = 
   | 'idle' 
   | 'checking'            // 1. Verifying Telegram ID
-  | 'id-verified'         // 2. Success screen for ID
+  | 'id-verified'         // 2. Success screen for ID (Wait for Continue)
   | 'phone-entry'         // 3. User enters phone
-  | 'submitting-phone'    // 4. Sending phone + starting session
-  | 'starting-session'    // 5. Sending device info
-  | 'sim-verifying'       // 6. NEW: Verifying SIM (Automatic)
-  | 'otp-entry'           // 7. NEW: User enters OTP
-  | 'verifying-otp'       // 8. NEW: Validating OTP
-  | 'account-entry'       // 9. NEW: User enters Account Number
-  | 'verifying-customer'  // 10. NEW: Validating Account
-  | 'completed'           // 11. All done
+  | 'processing-registration' // 4. Combined Loading: Share Contact -> Device Session -> SIM Verify
+  | 'otp-entry'           // 5. User enters OTP
+  | 'verifying-otp'       // 6. Validating OTP
+  | 'account-entry'       // 7. User enters Account Number
+  | 'verifying-customer'  // 8. Validating Account
+  | 'completed'           // 9. All done
   | 'error' 
   | 'invalid-environment';
 
@@ -109,7 +101,7 @@ type DebugDetails = {
 // --- CONSTANTS ---
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
 
-// --- HELPERS (Parsers) ---
+// --- HELPERS ---
 const mapUnsafeUser = (unsafeUser: UnsafeTelegramUser): TelegramUser | undefined => {
   if (!unsafeUser) return undefined;
   return {
@@ -153,22 +145,22 @@ const getInitDataFromUrl = (): string | undefined => {
 
 export default function RegistrationFlow() {
   const [status, setStatus] = useState<AppStatus>('idle');
+  const [loadingMessage, setLoadingMessage] = useState('Processing...');
   const [errorMessage, setErrorMessage] = useState('');
   const [debugDetails, setDebugDetails] = useState<DebugDetails | null>(null);
   
   // Data States
   const [phoneNumber, setPhoneNumber] = useState('');
-  const [currentUser, setCurrentUser] = useState<TelegramUser | null>(null);
-  const [initDataRawString, setInitDataRawString] = useState<string | undefined>(undefined);
-  
-  // New Data States
   const [activationCode, setActivationCode] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
+  
+  const [currentUser, setCurrentUser] = useState<TelegramUser | null>(null);
+  const [initDataRawString, setInitDataRawString] = useState<string | undefined>(undefined);
   const [cachedDeviceInfo, setCachedDeviceInfo] = useState<DeviceInfoPayload | null>(null);
 
   const hasChecked = useRef(false);
 
-  // --- HELPER: GENERIC FETCH WRAPPER ---
+  // --- FETCH WRAPPER ---
   const authenticatedFetch = async (url: string, payload: any) => {
     const headers: Record<string, string> = {
       'Content-Type': "application/json",
@@ -191,8 +183,7 @@ export default function RegistrationFlow() {
     return await response.json();
   };
 
-
-  // 1. INITIAL MOUNT (ID Verification)
+  // 1. INITIAL MOUNT & ID CHECK
   useEffect(() => {
     if (!BACKEND_URL) {
       setStatus('error');
@@ -205,34 +196,45 @@ export default function RegistrationFlow() {
 
     const performCheck = async () => {
       setStatus('checking');
+      setLoadingMessage('Verifying Account...');
       try {
+        // --- Retrieve Telegram Data ---
         let initData: any;
         let initDataRaw: string | undefined;
         try {
           const params = retrieveLaunchParams();
           initData = params.initData;
           initDataRaw = typeof params.initDataRaw === 'string' ? params.initDataRaw : undefined;
-        } catch (e) { console.warn("SDK retrieve failed"); }
+        } catch (e) { /* Ignore SDK error, use fallback */ }
 
         let tgUser = initData?.user as TelegramUser | undefined;
-        // ... (Parsing logic same as before) ...
-        // [Condensed for brevity - assume tgUser logic from previous steps is here]
-        
-        // --- Mocking parsing logic for this snippet ---
-        if (typeof window !== 'undefined' && !tgUser) {
-           const webApp = (window as any).Telegram?.WebApp;
-           const unsafeUser = webApp?.initDataUnsafe?.user;
-           if(unsafeUser) tgUser = mapUnsafeUser(unsafeUser);
-           initDataRaw = initDataRaw ?? webApp?.initData;
+        let initSource: DebugDetails['initDataSource'] = tgUser ? 'sdk' : undefined;
+
+        if (typeof window !== 'undefined') {
+          const webApp = (window as any).Telegram?.WebApp;
+          const unsafeUser = webApp?.initDataUnsafe?.user as UnsafeTelegramUser;
+          if (!tgUser && unsafeUser) {
+             tgUser = mapUnsafeUser(unsafeUser);
+             initSource = 'unsafe';
+          }
+          initDataRaw = initDataRaw ?? webApp?.initData;
+
+          if (!tgUser) {
+            const urlInitData = getInitDataFromUrl();
+            const parsed = parseUserFromInitDataString(urlInitData);
+            if (parsed) {
+              tgUser = parsed;
+              initSource = 'url';
+            }
+            initDataRaw = initDataRaw ?? urlInitData;
+          }
         }
-        
-        if (!tgUser) {
-           // Try URL fallback
-           const urlInitData = getInitDataFromUrl();
-           const parsed = parseUserFromInitDataString(urlInitData);
-           if(parsed) tgUser = parsed;
-           initDataRaw = initDataRaw ?? urlInitData;
-        }
+
+        setDebugDetails({
+          user: tgUser,
+          initDataSource: initSource,
+          initDataRawPreview: initDataRaw ? `${initDataRaw.slice(0, 80)}...` : undefined,
+        });
 
         if (!tgUser) {
           setStatus('invalid-environment');
@@ -242,7 +244,7 @@ export default function RegistrationFlow() {
         setCurrentUser(tgUser);
         setInitDataRawString(initDataRaw);
 
-        // Step 1: Check ID
+        // --- Step 1: Check ID ---
         const payload: CheckIdPayload = {
           allowed_financial_actions: ["ALL"],
           customer_profile: { avatar: "" },
@@ -260,6 +262,7 @@ export default function RegistrationFlow() {
 
         await authenticatedFetch('/api/v1/customers/checkTelegramID', payload);
         
+        // Success -> Show ID Verified Screen
         setStatus('id-verified');
 
       } catch (err: any) {
@@ -272,31 +275,32 @@ export default function RegistrationFlow() {
     performCheck();
   }, []);
 
+  // Handler: Move from ID Verified -> Phone Entry
+  const handleContinueToPhone = () => {
+    setStatus('phone-entry');
+  };
 
-  // --- HANDLERS ---
-
-  const handleStartRegistration = () => setStatus('phone-entry');
-
-  // STEP 2 & 3 & 4: Submit Phone -> Share Contact -> Session -> SIM Verify
+  // Handler: Submit Phone (Runs 3 APIs in sequence)
   const handlePhoneSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser || !phoneNumber) return;
-    
     if (phoneNumber.length < 5) { alert("Invalid phone"); return; }
 
+    setStatus('processing-registration');
+    
     try {
       // 1. Share Contact
-      setStatus('submitting-phone');
+      setLoadingMessage('Saving Contact Info...');
       const contactPayload: ShareContactPayload = {
         phone_number: phoneNumber,
         telegram_id: currentUser.id
       };
       await authenticatedFetch('/api/v1/customers/share-contact', contactPayload);
 
-      // 2. Start Session (Collect Device Info)
-      setStatus('starting-session');
+      // 2. Start Session
+      setLoadingMessage('Initializing Secure Session...');
       const deviceInfo = await getDeviceInfo();
-      setCachedDeviceInfo(deviceInfo); // Store for later steps
+      setCachedDeviceInfo(deviceInfo); // Cache for step 4
 
       const sessionPayload: DeviceSessionPayload = {
         device_info: deviceInfo,
@@ -305,8 +309,8 @@ export default function RegistrationFlow() {
       };
       await authenticatedFetch('/api/v1/device-session-start', sessionPayload);
 
-      // 3. SIM Verification (Automatic)
-      setStatus('sim-verifying');
+      // 3. SIM Verify
+      setLoadingMessage('Verifying Device Security...');
       const simPayload: SimVerifyPayload = {
         device_fingerprint: deviceInfo.fingerprint,
         phone_number: phoneNumber,
@@ -314,22 +318,23 @@ export default function RegistrationFlow() {
       };
       await authenticatedFetch('/api/v1/SIM-Verify', simPayload);
 
-      // If SIM verify passes, we assume OTP is sent. Move to OTP screen.
+      // All background checks passed -> Go to OTP
       setStatus('otp-entry');
 
     } catch (err: any) {
-      console.error("Flow failed:", err);
+      console.error("Registration flow failed:", err);
       setErrorMessage(err.message);
       setStatus('error');
     }
   };
 
-  // STEP 5: Verify Code
+  // Handler: Verify OTP
   const handleOtpSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser) return;
 
     setStatus('verifying-otp');
+    setLoadingMessage('Verifying Code...');
     try {
       const payload: VerifyCodePayload = {
         activation_code: activationCode,
@@ -338,7 +343,7 @@ export default function RegistrationFlow() {
       };
       await authenticatedFetch('/api/v1/verifyCode', payload);
       
-      // If code verified, move to Account Entry
+      // Success -> Go to Account Linking
       setStatus('account-entry');
     } catch (err: any) {
       setErrorMessage(err.message);
@@ -360,22 +365,23 @@ export default function RegistrationFlow() {
     }
   };
 
-  // STEP 6: Verify Customer (Account Linking)
+  // Handler: Verify Customer (Account Linking)
   const handleAccountSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser || !cachedDeviceInfo) return;
 
     setStatus('verifying-customer');
+    setLoadingMessage('Linking Bank Account...');
     try {
       const payload: VerifyCustomerPayload = {
         account_number: accountNumber,
-        device_id: cachedDeviceInfo.device_id, // From cached device info
+        device_id: cachedDeviceInfo.device_id,
         phone_number: phoneNumber,
         telegram_id: currentUser.id.toString()
       };
       await authenticatedFetch('/api/v1/verifyCustomer', payload);
 
-      // Success!
+      // Success -> Final Screen
       setStatus('completed');
     } catch (err: any) {
       setErrorMessage(err.message);
@@ -383,126 +389,230 @@ export default function RegistrationFlow() {
     }
   };
 
+
   // --- UI RENDERERS ---
 
+  // 1. Invalid Environment (Original UI restored)
   if (status === 'invalid-environment') {
-    return <div className="p-6 text-center text-gray-600 bg-gray-50 h-screen flex flex-col items-center justify-center">Please open in Telegram.</div>;
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-6 text-center">
+        <div className="bg-yellow-100 p-4 rounded-full mb-4">
+          <svg className="w-8 h-8 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+        </div>
+        <h2 className="text-xl font-bold text-gray-900 mb-2">Unsupported Environment</h2>
+        <p className="text-gray-600 mb-6 max-w-xs mx-auto">
+          Please open this inside the Telegram App.
+        </p>
+        {debugDetails && (
+          <div className="mt-4 text-xs text-left text-gray-500 bg-gray-100 rounded-md p-4 w-full max-w-sm overflow-hidden">
+             <p>Source: {debugDetails.initDataSource ?? 'none'}</p>
+             <p>User: {debugDetails.user ? 'Detected' : 'Missing'}</p>
+          </div>
+        )}
+      </div>
+    );
   }
 
-  // Generic Loading Screen
-  if (['checking', 'submitting-phone', 'starting-session', 'sim-verifying', 'verifying-otp', 'verifying-customer'].includes(status)) {
-    let text = 'Processing...';
-    if (status === 'checking') text = 'Verifying ID...';
-    if (status === 'submitting-phone') text = 'Saving Contact...';
-    if (status === 'starting-session') text = 'Initializing Session...';
-    if (status === 'sim-verifying') text = 'Verifying SIM...';
-    if (status === 'verifying-otp') text = 'Checking Code...';
-    if (status === 'verifying-customer') text = 'Linking Account...';
-
+  // 2. Loading State (Shared)
+  if (['checking', 'processing-registration', 'verifying-otp', 'verifying-customer'].includes(status)) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 text-gray-800">
         <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-        <p className="font-medium animate-pulse">{text}</p>
+        <p className="font-medium animate-pulse">{loadingMessage}</p>
       </div>
     );
   }
 
-  // Generic Error Screen
+  // 3. Error State (Original UI restored)
   if (status === 'error') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-red-50 p-6 text-center">
-        <div className="bg-red-100 p-4 rounded-full mb-4"><span className="text-2xl">❌</span></div>
-        <h2 className="text-xl font-bold text-gray-900 mb-2">Error</h2>
-        <p className="text-gray-600 mb-6">{errorMessage}</p>
-        <button onClick={() => window.location.reload()} className="bg-blue-600 text-white font-semibold py-2 px-6 rounded-lg">Retry</button>
+        <div className="bg-red-100 p-4 rounded-full mb-4">
+          <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+        </div>
+        <h2 className="text-xl font-bold text-gray-900 mb-2">Connection Failed</h2>
+        <p className="text-gray-600 mb-6 max-w-xs mx-auto break-words">{errorMessage}</p>
+        <button 
+          onClick={() => window.location.reload()} 
+          className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-6 rounded-lg transition-colors"
+        >
+          Retry
+        </button>
       </div>
     );
   }
 
-  // 1. ID Verified Screen
+  // 4. ID Verified Screen (Clean UI)
   if (status === 'id-verified') {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 animate-in fade-in">
-        <div className="bg-green-100 p-6 rounded-full mb-6 text-green-600 text-4xl">✓</div>
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">ID Verified</h1>
-        <p className="text-gray-500 text-center mb-8">Your Telegram identity is confirmed.</p>
-        <button onClick={handleStartRegistration} className="w-full bg-blue-600 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg">Continue</button>
+      <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 animate-in fade-in duration-300">
+        <div className="bg-green-100 p-6 rounded-full mb-6">
+            <svg className="w-12 h-12 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
+            </svg>
+        </div>
+        
+        <h1 className="text-2xl font-bold text-gray-900 mb-2">ID Verified Successfully</h1>
+        <p className="text-gray-500 text-center mb-8 max-w-xs">
+          Your Telegram identity has been confirmed.
+        </p>
+
+        <button
+            onClick={handleContinueToPhone}
+            className="w-full max-w-sm bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg transform transition hover:scale-[1.02] active:scale-95"
+        >
+            Continue
+        </button>
       </div>
     );
   }
 
-  // 2. Phone Entry Screen
+  // 5. Phone Entry Screen
   if (status === 'phone-entry') {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 animate-in slide-in-from-right">
+      <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 animate-in slide-in-from-right duration-300">
         <div className="w-full max-w-sm">
-          <h1 className="text-2xl font-bold text-gray-900 text-center mb-2">Your Number</h1>
-          <p className="text-gray-500 text-center mb-6">Enter your phone number to begin.</p>
-          <form onSubmit={handlePhoneSubmit} className="space-y-4">
-            <input type="tel" value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="+254..." required />
-            <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg">Next</button>
-          </form>
+            <div className="text-center mb-8">
+                <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <span className="text-3xl">📱</span>
+                </div>
+                <h1 className="text-2xl font-bold text-gray-900">Share Contact</h1>
+                <p className="text-gray-500 mt-2">
+                    Enter your phone number to complete registration.
+                </p>
+            </div>
+
+            <form onSubmit={handlePhoneSubmit} className="space-y-4">
+                <div>
+                    <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-1">
+                        Phone Number
+                    </label>
+                    <input
+                        id="phone"
+                        type="tel"
+                        placeholder="+254..."
+                        value={phoneNumber}
+                        onChange={(e) => setPhoneNumber(e.target.value)}
+                        className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-gray-900"
+                        required
+                        autoFocus
+                    />
+                </div>
+
+                <button
+                    type="submit"
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg transform transition hover:scale-[1.02] active:scale-95"
+                >
+                    Next
+                </button>
+            </form>
         </div>
       </div>
     );
   }
 
-  // 3. OTP Entry Screen
+  // 6. OTP Entry Screen
   if (status === 'otp-entry') {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 animate-in slide-in-from-right">
+      <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 animate-in slide-in-from-right duration-300">
         <div className="w-full max-w-sm">
-          <h1 className="text-2xl font-bold text-gray-900 text-center mb-2">Enter Code</h1>
-          <p className="text-gray-500 text-center mb-6">We sent an activation code to {phoneNumber}</p>
-          <form onSubmit={handleOtpSubmit} className="space-y-4">
-            <input 
-              type="text" 
-              value={activationCode} 
-              onChange={(e) => setActivationCode(e.target.value)} 
-              className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none text-center text-2xl tracking-widest" 
-              placeholder="000000" 
-              maxLength={6}
-              required 
-            />
-            <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg">Verify</button>
-          </form>
-          <button onClick={handleResendCode} className="mt-4 text-blue-600 text-sm font-semibold w-full text-center">Resend Code</button>
+            <div className="text-center mb-8">
+                <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <span className="text-3xl">🔐</span>
+                </div>
+                <h1 className="text-2xl font-bold text-gray-900">Enter Code</h1>
+                <p className="text-gray-500 mt-2">
+                    We sent an activation code to <br/><span className="font-semibold text-gray-800">{phoneNumber}</span>
+                </p>
+            </div>
+
+            <form onSubmit={handleOtpSubmit} className="space-y-6">
+                <input
+                    type="text"
+                    placeholder="000000"
+                    value={activationCode}
+                    onChange={(e) => setActivationCode(e.target.value)}
+                    className="w-full px-4 py-4 text-center text-2xl tracking-widest rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none transition-all text-gray-900"
+                    maxLength={6}
+                    required
+                    autoFocus
+                />
+
+                <button
+                    type="submit"
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg transform transition hover:scale-[1.02] active:scale-95"
+                >
+                    Verify
+                </button>
+            </form>
+            
+            <button 
+                onClick={handleResendCode}
+                className="w-full mt-6 text-sm text-blue-600 font-semibold hover:underline"
+            >
+                Resend Code
+            </button>
         </div>
       </div>
     );
   }
 
-  // 4. Account Entry Screen
+  // 7. Account Entry Screen
   if (status === 'account-entry') {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 animate-in slide-in-from-right">
+      <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 animate-in slide-in-from-right duration-300">
         <div className="w-full max-w-sm">
-          <h1 className="text-2xl font-bold text-gray-900 text-center mb-2">Link Account</h1>
-          <p className="text-gray-500 text-center mb-6">Enter your bank account number to verify ownership.</p>
-          <form onSubmit={handleAccountSubmit} className="space-y-4">
-            <input 
-              type="text" 
-              value={accountNumber} 
-              onChange={(e) => setAccountNumber(e.target.value)} 
-              className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none" 
-              placeholder="Account Number" 
-              required 
-            />
-            <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg">Verify Account</button>
-          </form>
+            <div className="text-center mb-8">
+                <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <span className="text-3xl">🏦</span>
+                </div>
+                <h1 className="text-2xl font-bold text-gray-900">Link Bank Account</h1>
+                <p className="text-gray-500 mt-2">
+                    Enter your account number to finalize the setup.
+                </p>
+            </div>
+
+            <form onSubmit={handleAccountSubmit} className="space-y-4">
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Account Number
+                    </label>
+                    <input
+                        type="text"
+                        placeholder="e.g. 1000..."
+                        value={accountNumber}
+                        onChange={(e) => setAccountNumber(e.target.value)}
+                        className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none transition-all text-gray-900"
+                        required
+                        autoFocus
+                    />
+                </div>
+
+                <button
+                    type="submit"
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg transform transition hover:scale-[1.02] active:scale-95"
+                >
+                    Link Account
+                </button>
+            </form>
         </div>
       </div>
     );
   }
 
-  // 5. Completion Screen
+  // 8. Completed Screen
   if (status === 'completed') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-green-50 text-center p-6">
-        <div className="bg-green-100 p-4 rounded-full mb-4 animate-bounce"><span className="text-4xl">✅</span></div>
-        <h1 className="text-2xl font-bold text-gray-900">Registration Complete</h1>
-        <p className="text-gray-600 mt-2">Your device and account are fully verified.</p>
-        <button className="mt-8 bg-green-600 text-white px-8 py-3 rounded-full font-semibold shadow-lg">Enter Dashboard</button>
+        <div className="bg-green-100 p-4 rounded-full mb-4 animate-bounce">
+            <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+        </div>
+        <h1 className="text-2xl font-bold text-gray-900">All Set!</h1>
+        <p className="text-gray-600 mt-2">Your secure session is active.</p>
+        
+        <button className="mt-8 bg-green-600 text-white px-8 py-3 rounded-full font-semibold shadow-lg">
+            Go to Dashboard
+        </button>
       </div>
     );
   }
