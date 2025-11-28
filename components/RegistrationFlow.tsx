@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { retrieveLaunchParams } from '@telegram-apps/sdk-react';
-import { RegistrationPayload } from '@/types/user';
+import { getDeviceInfo, DeviceInfoPayload } from '@/utils/getDeviceInfo';
 
 // --- TYPES ---
 
@@ -16,19 +16,43 @@ interface TelegramUser {
   isPremium?: boolean;
 }
 
+// Payload for Step 1
+interface CheckIdPayload {
+  allowed_financial_actions: string[];
+  customer_profile: { avatar: string };
+  first_name: string;
+  is_bot_user: boolean;
+  is_premium: boolean;
+  kyc_status: string;
+  language_code: string;
+  last_name: string;
+  phone_number: string;
+  registration_status: string;
+  telegram_id: number;
+  username: string;
+}
+
+// Payload for Step 2
 interface ShareContactPayload {
   phone_number: string;
   telegram_id: number;
 }
 
-// 1. UPDATED STATUS TYPES
+// Payload for Step 3
+interface DeviceSessionPayload {
+  device_info: DeviceInfoPayload;
+  phone_number: string;
+  telegram_id: string; // Cast to string as per requirements
+}
+
 type AppStatus = 
   | 'idle' 
-  | 'checking'            // Verifying Telegram ID
-  | 'id-verified'         // <--- NEW: Success screen with "Continue" button
-  | 'phone-entry'         // Inputting phone number
-  | 'submitting-phone'    // Sending Phone to Backend
-  | 'completed'           // All done
+  | 'checking'            // 1. Verifying Telegram ID
+  | 'id-verified'         // 2. Success screen for ID
+  | 'phone-entry'         // 3. User enters phone
+  | 'submitting-phone'    // 4. Sending phone to backend
+  | 'starting-session'    // 5. Sending device info
+  | 'completed'           // 6. All done
   | 'error' 
   | 'invalid-environment';
 
@@ -48,9 +72,11 @@ type DebugDetails = {
   user?: TelegramUser;
 };
 
+// --- CONSTANTS ---
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
 
-// --- HELPERS (Same as before) ---
+// --- HELPERS ---
+
 const mapUnsafeUser = (unsafeUser: UnsafeTelegramUser): TelegramUser | undefined => {
   if (!unsafeUser) return undefined;
   return {
@@ -100,13 +126,14 @@ export default function RegistrationFlow() {
   const [errorMessage, setErrorMessage] = useState('');
   const [debugDetails, setDebugDetails] = useState<DebugDetails | null>(null);
   
+  // Data State
   const [phoneNumber, setPhoneNumber] = useState('');
   const [currentUser, setCurrentUser] = useState<TelegramUser | null>(null);
   const [initDataRawString, setInitDataRawString] = useState<string | undefined>(undefined);
 
   const hasChecked = useRef(false);
 
-  // 1. INITIAL CHECK
+  // 1. INITIAL MOUNT & ID CHECK
   useEffect(() => {
     if (!BACKEND_URL) {
       setStatus('error');
@@ -120,6 +147,7 @@ export default function RegistrationFlow() {
     const performCheck = async () => {
       setStatus('checking');
       try {
+        // --- A. Retrieve Telegram Data ---
         let initData: any;
         let initDataRaw: string | undefined;
         try {
@@ -127,15 +155,17 @@ export default function RegistrationFlow() {
           initData = params.initData;
           initDataRaw = typeof params.initDataRaw === 'string' ? params.initDataRaw : undefined;
         } catch (e) {
-          throw new Error("Could not retrieve Telegram data.");
+          console.warn("SDK retrieve failed, trying fallbacks.");
         }
 
         let tgUser = initData?.user as TelegramUser | undefined;
         let initSource: DebugDetails['initDataSource'] = tgUser ? 'sdk' : undefined;
 
+        // Fallbacks for development/direct link opening
         if (typeof window !== 'undefined') {
           const webApp = (window as any).Telegram?.WebApp;
           const unsafeUser = webApp?.initDataUnsafe?.user as UnsafeTelegramUser;
+          
           if (!tgUser) {
             const mapped = mapUnsafeUser(unsafeUser);
             if (mapped) {
@@ -167,10 +197,12 @@ export default function RegistrationFlow() {
           return;
         }
 
+        // Save for later steps
         setCurrentUser(tgUser);
         setInitDataRawString(initDataRaw);
 
-        const payload: RegistrationPayload = {
+        // --- B. Verify Telegram ID (Step 1) ---
+        const payload: CheckIdPayload = {
           allowed_financial_actions: ["ALL"],
           customer_profile: { avatar: "" },
           first_name: tgUser.firstName.replace(/[^a-zA-Z]/g, '') || 'User',
@@ -179,7 +211,7 @@ export default function RegistrationFlow() {
           kyc_status: "PENDING",
           language_code: tgUser.languageCode || "en",
           last_name: tgUser.lastName || "",
-          phone_number: "",
+          phone_number: "", 
           registration_status: "SELF",
           telegram_id: tgUser.id,
           username: tgUser.username || ""
@@ -201,15 +233,14 @@ export default function RegistrationFlow() {
 
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.message || `Server error: ${response.statusText}`);
+            throw new Error(errorData.message || `ID Check Failed: ${response.statusText}`);
         }
 
-        // --- CHANGE: STOP HERE AT "ID VERIFIED" ---
-        console.log("Telegram ID Verified.");
-        setStatus('id-verified'); // Pauses here for user interaction
+        // --- C. Success -> Show "ID Verified" screen ---
+        setStatus('id-verified');
 
       } catch (err: any) {
-        console.error("Initial check failed:", err);
+        console.error("Initialization failed:", err);
         setErrorMessage(err.message || "Unknown error occurred");
         setStatus('error');
       }
@@ -218,12 +249,12 @@ export default function RegistrationFlow() {
     performCheck();
   }, []);
 
-  // 2. HANDLER TO MOVE TO PHONE ENTRY
+  // 2. HANDLER: Move from ID Verified -> Phone Entry
   const handleContinue = () => {
     setStatus('phone-entry');
   };
 
-  // 3. SUBMIT PHONE NUMBER
+  // 3. HANDLER: Submit Phone -> Share Contact -> Start Session
   const handlePhoneSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser || !phoneNumber) return;
@@ -236,11 +267,6 @@ export default function RegistrationFlow() {
     setStatus('submitting-phone');
 
     try {
-      const payload: ShareContactPayload = {
-        phone_number: phoneNumber,
-        telegram_id: currentUser.id
-      };
-
       const headers: Record<string, string> = {
         'Content-Type': "application/json",
         'X-Channel-Id': "telegram",
@@ -249,28 +275,58 @@ export default function RegistrationFlow() {
       };
       if (initDataRawString) headers['X-Telegram-Init'] = initDataRawString;
 
-      const response = await fetch(`${BACKEND_URL}/api/v1/customers/share-contact`, {
+      // --- Step 2: Share Contact ---
+      const contactPayload: ShareContactPayload = {
+        phone_number: phoneNumber,
+        telegram_id: currentUser.id
+      };
+
+      const contactRes = await fetch(`${BACKEND_URL}/api/v1/customers/share-contact`, {
         method: 'POST',
         headers,
-        body: JSON.stringify(payload),
+        body: JSON.stringify(contactPayload),
       });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || `Phone submission failed: ${response.statusText}`);
+      if (!contactRes.ok) {
+        const errorData = await contactRes.json().catch(() => ({}));
+        throw new Error(errorData.message || "Failed to save contact.");
       }
-      
+
+      // --- Step 3: Start Device Session ---
+      setStatus('starting-session');
+
+      // Gather device info (Client side)
+      const deviceInfo = await getDeviceInfo();
+
+      const sessionPayload: DeviceSessionPayload = {
+        device_info: deviceInfo,
+        phone_number: phoneNumber,
+        telegram_id: currentUser.id.toString()
+      };
+
+      const sessionRes = await fetch(`${BACKEND_URL}/api/v1/device-session-start`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(sessionPayload),
+      });
+
+      if (!sessionRes.ok) {
+        const errorData = await sessionRes.json().catch(() => ({}));
+        throw new Error(errorData.message || "Failed to start device session.");
+      }
+
+      // Success
       setStatus('completed');
 
     } catch (err: any) {
-      console.error("Phone submission failed:", err);
-      setErrorMessage(err.message || "Failed to save phone number");
+      console.error("Submission failed:", err);
+      setErrorMessage(err.message || "Failed to complete registration.");
       setStatus('error');
     }
   };
 
 
-  // --- UI STATES ---
+  // --- UI RENDERERS ---
 
   if (status === 'invalid-environment') {
     return (
@@ -279,18 +335,24 @@ export default function RegistrationFlow() {
           <span className="text-2xl">⚠️</span>
         </div>
         <h2 className="text-xl font-bold text-gray-900 mb-2">Unsupported Environment</h2>
-        <p className="text-gray-600 mb-6 max-w-xs mx-auto">Please open this inside Telegram.</p>
+        <p className="text-gray-600 mb-6 max-w-xs mx-auto">Please open this app inside Telegram.</p>
+        {debugDetails?.user && <p className="text-xs text-gray-400">User detected but context invalid.</p>}
       </div>
     );
   }
 
-  if (status === 'checking' || status === 'submitting-phone') {
+  // Loading States
+  if (['checking', 'submitting-phone', 'starting-session'].includes(status)) {
+    let text = 'Loading...';
+    if (status === 'checking') text = 'Verifying Account...';
+    if (status === 'submitting-phone') text = 'Saving Contact Info...';
+    if (status === 'starting-session') text = 'Initializing Secure Session...';
+
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 text-gray-800">
         <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-        <p className="font-medium animate-pulse">
-            {status === 'checking' ? 'Verifying Account...' : 'Saving Contact Info...'}
-        </p>
+        <p className="font-medium animate-pulse">{text}</p>
+        {status === 'starting-session' && <p className="text-xs text-gray-400 mt-2">Configuring device security...</p>}
       </div>
     );
   }
@@ -298,35 +360,30 @@ export default function RegistrationFlow() {
   if (status === 'error') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-red-50 p-6 text-center">
-        <div className="bg-red-100 p-4 rounded-full mb-4">
-            <span className="text-2xl">❌</span>
-        </div>
-        <h2 className="text-xl font-bold text-gray-900 mb-2">Something went wrong</h2>
-        <p className="text-gray-600 mb-6 max-w-xs mx-auto">{errorMessage}</p>
+        <div className="bg-red-100 p-4 rounded-full mb-4"><span className="text-2xl">❌</span></div>
+        <h2 className="text-xl font-bold text-gray-900 mb-2">Connection Failed</h2>
+        <p className="text-gray-600 mb-6 max-w-xs mx-auto break-words">{errorMessage}</p>
         <button onClick={() => window.location.reload()} className="bg-blue-600 text-white font-semibold py-2 px-6 rounded-lg">Retry</button>
       </div>
     );
   }
 
-  // --- NEW: ID VERIFIED SUCCESS SCREEN ---
+  // SCREEN: ID Verified
   if (status === 'id-verified') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 animate-in fade-in duration-300">
         <div className="bg-green-100 p-6 rounded-full mb-6">
-            {/* Big Checkmark Icon */}
-            <svg className="w-12 h-12 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <svg className="w-12 h-12 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
             </svg>
         </div>
-        
         <h1 className="text-2xl font-bold text-gray-900 mb-2">ID Verified Successfully</h1>
         <p className="text-gray-500 text-center mb-8 max-w-xs">
           Your Telegram identity has been confirmed. Please continue to set up your contact details.
         </p>
-
         <button
             onClick={handleContinue}
-            className="w-full max-w-sm bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg transform transition hover:scale-[1.02] active:scale-95"
+            className="w-full max-w-sm bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg transition-transform active:scale-95"
         >
             Continue
         </button>
@@ -334,7 +391,7 @@ export default function RegistrationFlow() {
     );
   }
 
-  // --- PHONE ENTRY STEP ---
+  // SCREEN: Phone Entry
   if (status === 'phone-entry') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 animate-in slide-in-from-right duration-300">
@@ -344,33 +401,28 @@ export default function RegistrationFlow() {
                     <span className="text-3xl">📱</span>
                 </div>
                 <h1 className="text-2xl font-bold text-gray-900">Share Contact</h1>
-                <p className="text-gray-500 mt-2">
-                    Enter your phone number to complete registration.
-                </p>
+                <p className="text-gray-500 mt-2">Enter your phone number to complete registration.</p>
             </div>
 
             <form onSubmit={handlePhoneSubmit} className="space-y-4">
                 <div>
-                    <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-1">
-                        Phone Number
-                    </label>
+                    <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-1">Phone Number</label>
                     <input
                         id="phone"
                         type="tel"
                         placeholder="+254..."
                         value={phoneNumber}
                         onChange={(e) => setPhoneNumber(e.target.value)}
-                        className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-gray-900 placeholder-gray-400"
+                        className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none transition-all text-gray-900"
                         required
                         autoFocus
                     />
                 </div>
-
                 <button
                     type="submit"
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg transform transition hover:scale-[1.02] active:scale-95"
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg transition-transform active:scale-95"
                 >
-                    Submit Contact
+                    Submit & Start Session
                 </button>
             </form>
         </div>
@@ -378,7 +430,7 @@ export default function RegistrationFlow() {
     );
   }
 
-  // --- FINAL SUCCESS ---
+  // SCREEN: Completed
   if (status === 'completed') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-green-50 text-center p-6">
@@ -386,9 +438,12 @@ export default function RegistrationFlow() {
             <span className="text-4xl">✅</span>
         </div>
         <h1 className="text-2xl font-bold text-gray-900">All Set!</h1>
-        <p className="text-gray-600 mt-2">Your registration is complete.</p>
-        <button className="mt-8 bg-green-600 text-white px-8 py-3 rounded-full font-semibold shadow-lg">
-            Go to Dashboard
+        <p className="text-gray-600 mt-2">Your secure session is active.</p>
+        <button 
+            onClick={() => alert("Redirect to dashboard")} // Replace with router.push('/dashboard')
+            className="mt-8 bg-green-600 text-white px-8 py-3 rounded-full font-semibold shadow-lg"
+        >
+            Enter Dashboard
         </button>
       </div>
     );
