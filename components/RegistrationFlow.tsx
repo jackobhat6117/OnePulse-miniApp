@@ -16,16 +16,17 @@ interface TelegramUser {
   isPremium?: boolean;
 }
 
-// New Payload Interface
 interface ShareContactPayload {
   phone_number: string;
   telegram_id: number;
 }
 
+// 1. UPDATED STATUS TYPES
 type AppStatus = 
   | 'idle' 
   | 'checking'            // Verifying Telegram ID
-  | 'phone-entry'         // ID Verified, asking for Phone
+  | 'id-verified'         // <--- NEW: Success screen with "Continue" button
+  | 'phone-entry'         // Inputting phone number
   | 'submitting-phone'    // Sending Phone to Backend
   | 'completed'           // All done
   | 'error' 
@@ -47,11 +48,9 @@ type DebugDetails = {
   user?: TelegramUser;
 };
 
-// --- CONSTANTS ---
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
 
-// --- HELPERS ---
-
+// --- HELPERS (Same as before) ---
 const mapUnsafeUser = (unsafeUser: UnsafeTelegramUser): TelegramUser | undefined => {
   if (!unsafeUser) return undefined;
   return {
@@ -100,15 +99,14 @@ export default function RegistrationFlow() {
   const [status, setStatus] = useState<AppStatus>('idle');
   const [errorMessage, setErrorMessage] = useState('');
   const [debugDetails, setDebugDetails] = useState<DebugDetails | null>(null);
+  
   const [phoneNumber, setPhoneNumber] = useState('');
   const [currentUser, setCurrentUser] = useState<TelegramUser | null>(null);
   const [initDataRawString, setInitDataRawString] = useState<string | undefined>(undefined);
- 
-
 
   const hasChecked = useRef(false);
 
-  // 1. INITIAL CHECK (Existing logic)
+  // 1. INITIAL CHECK
   useEffect(() => {
     if (!BACKEND_URL) {
       setStatus('error');
@@ -122,7 +120,6 @@ export default function RegistrationFlow() {
     const performCheck = async () => {
       setStatus('checking');
       try {
-        // --- (Same Data Retrieval Logic as before) ---
         let initData: any;
         let initDataRaw: string | undefined;
         try {
@@ -130,7 +127,7 @@ export default function RegistrationFlow() {
           initData = params.initData;
           initDataRaw = typeof params.initDataRaw === 'string' ? params.initDataRaw : undefined;
         } catch (e) {
-          throw new Error("Could not retrieve Telegram data. Open inside Telegram.");
+          throw new Error("Could not retrieve Telegram data.");
         }
 
         let tgUser = initData?.user as TelegramUser | undefined;
@@ -170,11 +167,9 @@ export default function RegistrationFlow() {
           return;
         }
 
-        // Store user for the next step
         setCurrentUser(tgUser);
         setInitDataRawString(initDataRaw);
 
-        // --- Step 1: Verify/Register Telegram ID ---
         const payload: RegistrationPayload = {
           allowed_financial_actions: ["ALL"],
           customer_profile: { avatar: "" },
@@ -184,7 +179,7 @@ export default function RegistrationFlow() {
           kyc_status: "PENDING",
           language_code: tgUser.languageCode || "en",
           last_name: tgUser.lastName || "",
-          phone_number: "", // Intentionally empty for first step
+          phone_number: "",
           registration_status: "SELF",
           telegram_id: tgUser.id,
           username: tgUser.username || ""
@@ -209,9 +204,9 @@ export default function RegistrationFlow() {
             throw new Error(errorData.message || `Server error: ${response.statusText}`);
         }
 
-        // --- SUCCESS: Move to Phone Entry Step ---
-        console.log("Telegram ID Verified. Moving to Phone Entry.");
-        setStatus('phone-entry');
+        // --- CHANGE: STOP HERE AT "ID VERIFIED" ---
+        console.log("Telegram ID Verified.");
+        setStatus('id-verified'); // Pauses here for user interaction
 
       } catch (err: any) {
         console.error("Initial check failed:", err);
@@ -223,14 +218,16 @@ export default function RegistrationFlow() {
     performCheck();
   }, []);
 
+  // 2. HANDLER TO MOVE TO PHONE ENTRY
+  const handleContinue = () => {
+    setStatus('phone-entry');
+  };
 
-  // 2. SUBMIT PHONE NUMBER (New Logic)
+  // 3. SUBMIT PHONE NUMBER
   const handlePhoneSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
     if (!currentUser || !phoneNumber) return;
     
-    // Basic validation
     if (phoneNumber.length < 5) {
       alert("Please enter a valid phone number");
       return;
@@ -244,8 +241,6 @@ export default function RegistrationFlow() {
         telegram_id: currentUser.id
       };
 
-      console.log("Submitting Phone Payload:", payload);
-
       const headers: Record<string, string> = {
         'Content-Type': "application/json",
         'X-Channel-Id': "telegram",
@@ -255,7 +250,7 @@ export default function RegistrationFlow() {
       if (initDataRawString) headers['X-Telegram-Init'] = initDataRawString;
 
       const response = await fetch(`${BACKEND_URL}/api/v1/customers/share-contact`, {
-        method: 'POST', 
+        method: 'POST',
         headers,
         body: JSON.stringify(payload),
       });
@@ -264,9 +259,6 @@ export default function RegistrationFlow() {
         const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.message || `Phone submission failed: ${response.statusText}`);
       }
-
-      const responseData = await response.json();
-      console.log("Phone Registration Success:", responseData);
       
       setStatus('completed');
 
@@ -278,9 +270,8 @@ export default function RegistrationFlow() {
   };
 
 
-  // --- UI RENDERING ---
+  // --- UI STATES ---
 
-  // 1. Unsupported Environment
   if (status === 'invalid-environment') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-6 text-center">
@@ -288,14 +279,11 @@ export default function RegistrationFlow() {
           <span className="text-2xl">⚠️</span>
         </div>
         <h2 className="text-xl font-bold text-gray-900 mb-2">Unsupported Environment</h2>
-        <p className="text-gray-600 mb-6 max-w-xs mx-auto">
-          Please open this inside the Telegram App.
-        </p>
+        <p className="text-gray-600 mb-6 max-w-xs mx-auto">Please open this inside Telegram.</p>
       </div>
     );
   }
 
-  // 2. Loading State (Checking ID or Submitting Phone)
   if (status === 'checking' || status === 'submitting-phone') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 text-gray-800">
@@ -307,7 +295,6 @@ export default function RegistrationFlow() {
     );
   }
 
-  // 3. Error State
   if (status === 'error') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-red-50 p-6 text-center">
@@ -316,28 +303,49 @@ export default function RegistrationFlow() {
         </div>
         <h2 className="text-xl font-bold text-gray-900 mb-2">Something went wrong</h2>
         <p className="text-gray-600 mb-6 max-w-xs mx-auto">{errorMessage}</p>
-        <button 
-          onClick={() => window.location.reload()} 
-          className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-6 rounded-lg transition-colors"
+        <button onClick={() => window.location.reload()} className="bg-blue-600 text-white font-semibold py-2 px-6 rounded-lg">Retry</button>
+      </div>
+    );
+  }
+
+  // --- NEW: ID VERIFIED SUCCESS SCREEN ---
+  if (status === 'id-verified') {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 animate-in fade-in duration-300">
+        <div className="bg-green-100 p-6 rounded-full mb-6">
+            {/* Big Checkmark Icon */}
+            <svg className="w-12 h-12 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
+            </svg>
+        </div>
+        
+        <h1 className="text-2xl font-bold text-gray-900 mb-2">ID Verified Successfully</h1>
+        <p className="text-gray-500 text-center mb-8 max-w-xs">
+          Your Telegram identity has been confirmed. Please continue to set up your contact details.
+        </p>
+
+        <button
+            onClick={handleContinue}
+            className="w-full max-w-sm bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg transform transition hover:scale-[1.02] active:scale-95"
         >
-          Retry
+            Continue
         </button>
       </div>
     );
   }
 
-  // 4. PHONE ENTRY STEP (After 'registered' becomes true)
+  // --- PHONE ENTRY STEP ---
   if (status === 'phone-entry') {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6">
+      <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 animate-in slide-in-from-right duration-300">
         <div className="w-full max-w-sm">
             <div className="text-center mb-8">
                 <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
                     <span className="text-3xl">📱</span>
                 </div>
-                <h1 className="text-2xl font-bold text-gray-900">Next Step</h1>
+                <h1 className="text-2xl font-bold text-gray-900">Share Contact</h1>
                 <p className="text-gray-500 mt-2">
-                    Please provide your phone number to complete the registration.
+                    Enter your phone number to complete registration.
                 </p>
             </div>
 
@@ -349,11 +357,12 @@ export default function RegistrationFlow() {
                     <input
                         id="phone"
                         type="tel"
-                        placeholder="+251..."
+                        placeholder="+254..."
                         value={phoneNumber}
                         onChange={(e) => setPhoneNumber(e.target.value)}
                         className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-gray-900 placeholder-gray-400"
                         required
+                        autoFocus
                     />
                 </div>
 
@@ -361,19 +370,15 @@ export default function RegistrationFlow() {
                     type="submit"
                     className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg transform transition hover:scale-[1.02] active:scale-95"
                 >
-                    Continue
+                    Submit Contact
                 </button>
             </form>
-            
-            <p className="text-xs text-center text-gray-400 mt-6">
-                Your number is securely sent to our banking server.
-            </p>
         </div>
       </div>
     );
   }
 
-  // 5. Final Success State
+  // --- FINAL SUCCESS ---
   if (status === 'completed') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-green-50 text-center p-6">
@@ -382,8 +387,6 @@ export default function RegistrationFlow() {
         </div>
         <h1 className="text-2xl font-bold text-gray-900">All Set!</h1>
         <p className="text-gray-600 mt-2">Your registration is complete.</p>
-        
-        {/* Placeholder for Dashboard Redirect */}
         <button className="mt-8 bg-green-600 text-white px-8 py-3 rounded-full font-semibold shadow-lg">
             Go to Dashboard
         </button>
