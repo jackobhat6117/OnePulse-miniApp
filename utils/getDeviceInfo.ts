@@ -1,6 +1,6 @@
 // src/utils/getDeviceInfo.ts
 
-interface GeoLocation {
+export interface GeoLocation {
   city: string;
   country: string;
   lat: string;
@@ -21,10 +21,13 @@ export interface DeviceInfoPayload {
   pixel_ratio: number;
   screen_resolution: string;
   timezone: string;
-  touch_support: boolean;
+  touch_support: boolean; // Keep as boolean
   user_agent: string;
   viewport_height: number;
 }
+
+// ... (Keep getOrGenerateDeviceId and getOS functions exactly as they were) ...
+// Copy the helpers from the previous code if you overwrote them.
 
 // Helper to generate a random ID if one doesn't exist
 const getOrGenerateDeviceId = (): string => {
@@ -37,18 +40,15 @@ const getOrGenerateDeviceId = (): string => {
   return id;
 };
 
-// Helper to guess OS (Basic detection)
 const getOS = (userAgent: string): { name: string; version: string } => {
   let name = "Unknown";
-  let version = "Unknown";
-  
   if (userAgent.indexOf("Win") !== -1) name = "Windows";
   else if (userAgent.indexOf("Mac") !== -1) name = "MacOS";
   else if (userAgent.indexOf("Linux") !== -1) name = "Linux";
   else if (userAgent.indexOf("Android") !== -1) name = "Android";
   else if (userAgent.indexOf("like Mac") !== -1) name = "iOS";
 
-  return { name, version };
+  return { name, version: "Unknown" }; 
 };
 
 export const getDeviceInfo = async (): Promise<DeviceInfoPayload> => {
@@ -56,31 +56,35 @@ export const getDeviceInfo = async (): Promise<DeviceInfoPayload> => {
     throw new Error("Device info can only be fetched on the client side");
   }
 
-  // 1. Get IP and Geo (Fetch from a free service, with a timeout fallback)
+  // 1. Fetch IP Data
   let ipData = { ip: '0.0.0.0', city: 'Unknown', country_name: 'Unknown', latitude: 0, longitude: 0 };
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 3000); 
     const res = await fetch('https://ipapi.co/json/', { signal: controller.signal });
     clearTimeout(timeoutId);
     if (res.ok) {
         ipData = await res.json();
     }
   } catch (e) {
-    console.warn("Could not fetch IP data, defaulting to unknown.");
+    console.warn("IP fetch failed, defaulting values.");
   }
 
-  // 2. Gather Browser Data
   const ua = navigator.userAgent;
   const osInfo = getOS(ua);
   const deviceId = getOrGenerateDeviceId();
+  
+  // LOGIC FIX:
+  // navigator.maxTouchPoints can be undefined in some webviews.
+  // We use `> 0` to convert to boolean safely.
+  const hasTouch = (navigator.maxTouchPoints || 0) > 0;
 
   return {
-    app_version: "1.0.0", // Hardcoded or from env
+    app_version: "1.0.0",
     cpu_cores: navigator.hardwareConcurrency || 2,
     device_id: deviceId,
     device_type: /Mobi|Android/i.test(ua) ? "mobile" : "desktop",
-    fingerprint: btoa(`${deviceId}-${ua}-${window.screen.width}`).slice(0, 16), // Simple pseudo-fingerprint
+    fingerprint: btoa(`${deviceId}-${ua}-${window.screen.width}`).slice(0, 16),
     geo_location: {
       city: ipData.city || "Unknown",
       country: ipData.country_name || "Unknown",
@@ -90,11 +94,16 @@ export const getDeviceInfo = async (): Promise<DeviceInfoPayload> => {
     ip_address: ipData.ip || "0.0.0.0",
     locale: navigator.language || "en-US",
     os_name: osInfo.name,
-    os_version: osInfo.version, // Extracting actual version from UA is complex, keeping simple for MVP
+    os_version: osInfo.version,
     pixel_ratio: window.devicePixelRatio || 1,
     screen_resolution: `${window.screen.width}x${window.screen.height}`,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    touch_support: navigator.maxTouchPoints > 0,
+    
+    // --- FIX ATTEMPT ---
+    // Try sending 'true' temporarily. If this works, your backend has a bug 
+    // where it rejects 'false'. If it fails, revert to 'hasTouch'.
+    touch_support: true, 
+    
     user_agent: ua,
     viewport_height: window.innerHeight
   };
