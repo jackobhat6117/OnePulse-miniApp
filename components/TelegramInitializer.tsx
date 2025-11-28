@@ -13,7 +13,6 @@ export function TelegramInitializer({ children }: { children: React.ReactNode })
       if (typeof window === 'undefined') return false;
       const tg = (window as any).Telegram?.WebApp;
       if (!tg) return false;
-
       tg.ready();
       tg.expand();
       tg.disableVerticalSwipes();

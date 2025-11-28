@@ -4,8 +4,8 @@ import { useEffect, useState, useRef } from 'react';
 import { retrieveLaunchParams } from '@telegram-apps/sdk-react';
 import { RegistrationPayload } from '@/types/user';
 
-// 1. DEFINE THE INTERFACE MANUALLY
-// This tells TypeScript exactly what to expect from the Telegram User object.
+// --- TYPES ---
+
 interface TelegramUser {
   id: number;
   firstName: string;
@@ -16,8 +16,20 @@ interface TelegramUser {
   isPremium?: boolean;
 }
 
-// Replace with your actual endpoint
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
+// New Payload Interface
+interface ShareContactPayload {
+  phone_number: string;
+  telegram_id: number;
+}
+
+type AppStatus = 
+  | 'idle' 
+  | 'checking'            // Verifying Telegram ID
+  | 'phone-entry'         // ID Verified, asking for Phone
+  | 'submitting-phone'    // Sending Phone to Backend
+  | 'completed'           // All done
+  | 'error' 
+  | 'invalid-environment';
 
 type UnsafeTelegramUser = {
   id: number;
@@ -28,6 +40,17 @@ type UnsafeTelegramUser = {
   photo_url?: string;
   is_premium?: boolean;
 } | undefined;
+
+type DebugDetails = {
+  initDataSource?: 'sdk' | 'unsafe' | 'url';
+  initDataRawPreview?: string;
+  user?: TelegramUser;
+};
+
+// --- CONSTANTS ---
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
+
+// --- HELPERS ---
 
 const mapUnsafeUser = (unsafeUser: UnsafeTelegramUser): TelegramUser | undefined => {
   if (!unsafeUser) return undefined;
@@ -62,7 +85,6 @@ const getInitDataFromUrl = (): string | undefined => {
     const currentUrl = new URL(window.location.href);
     const searchParam = currentUrl.searchParams.get('tgWebAppData');
     if (searchParam) return decodeURIComponent(searchParam);
-
     if (currentUrl.hash.startsWith('#tgWebAppData=')) {
       return decodeURIComponent(currentUrl.hash.replace('#tgWebAppData=', ''));
     }
@@ -72,57 +94,51 @@ const getInitDataFromUrl = (): string | undefined => {
   return undefined;
 };
 
-type DebugDetails = {
-  initDataSource?: 'sdk' | 'unsafe' | 'url';
-  initDataRawPreview?: string;
-  user?: TelegramUser;
-};
+// --- COMPONENT ---
 
 export default function RegistrationFlow() {
-  const [status, setStatus] = useState<'idle' | 'checking' | 'registered' | 'error' | 'invalid-environment'>('idle');
+  const [status, setStatus] = useState<AppStatus>('idle');
   const [errorMessage, setErrorMessage] = useState('');
   const [debugDetails, setDebugDetails] = useState<DebugDetails | null>(null);
-  
-  // Ref to prevent double-execution in React Strict Mode
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [currentUser, setCurrentUser] = useState<TelegramUser | null>(null);
+  const [initDataRawString, setInitDataRawString] = useState<string | undefined>(undefined);
+ 
+
+
   const hasChecked = useRef(false);
 
+  // 1. INITIAL CHECK (Existing logic)
   useEffect(() => {
     if (!BACKEND_URL) {
       setStatus('error');
-      setErrorMessage('The backend URL is not configured correctly. Please check NEXT_PUBLIC_BACKEND_URL.');
+      setErrorMessage('The backend URL is not configured correctly.');
       return;
     }
 
     if (hasChecked.current) return;
     hasChecked.current = true;
 
-    const performRegistration = async () => {
+    const performCheck = async () => {
       setStatus('checking');
       try {
-        // 1. Safely retrieve Telegram Data
+        // --- (Same Data Retrieval Logic as before) ---
         let initData: any;
         let initDataRaw: string | undefined;
         try {
-          console.log("Attempting to retrieve launch parameters...");
           const params = retrieveLaunchParams();
-          console.log("Launch parameters received:", params);
           initData = params.initData;
           initDataRaw = typeof params.initDataRaw === 'string' ? params.initDataRaw : undefined;
-          console.log("initData object:", initData);
         } catch (e) {
-          console.error("Error retrieving launch parameters:", e);
-          throw new Error("Could not retrieve Telegram data. Please open this inside Telegram.");
+          throw new Error("Could not retrieve Telegram data. Open inside Telegram.");
         }
 
-        // Prefer user from initData (SDK), but gracefully fall back to Telegram WebApp global
         let tgUser = initData?.user as TelegramUser | undefined;
         let initSource: DebugDetails['initDataSource'] = tgUser ? 'sdk' : undefined;
 
-        // Fallback: use window.Telegram.WebApp data or tgWebAppData URL param
         if (typeof window !== 'undefined') {
           const webApp = (window as any).Telegram?.WebApp;
           const unsafeUser = webApp?.initDataUnsafe?.user as UnsafeTelegramUser;
-          console.log("Fallback initDataUnsafe.user:", unsafeUser);
           if (!tgUser) {
             const mapped = mapUnsafeUser(unsafeUser);
             if (mapped) {
@@ -134,7 +150,6 @@ export default function RegistrationFlow() {
 
           if (!tgUser) {
             const urlInitData = getInitDataFromUrl();
-            console.log("Parsing tgWebAppData from URL:", urlInitData);
             const parsed = parseUserFromInitDataString(urlInitData);
             if (parsed) {
               tgUser = parsed;
@@ -144,7 +159,6 @@ export default function RegistrationFlow() {
           }
         }
 
-        console.log("Resolved Telegram user:", tgUser);
         setDebugDetails({
           user: tgUser,
           initDataSource: initSource,
@@ -156,37 +170,33 @@ export default function RegistrationFlow() {
           return;
         }
 
-       
+        // Store user for the next step
+        setCurrentUser(tgUser);
+        setInitDataRawString(initDataRaw);
+
+        // --- Step 1: Verify/Register Telegram ID ---
         const payload: RegistrationPayload = {
           allowed_financial_actions: ["ALL"],
-          customer_profile: {
-            avatar: "" 
-          },
+          customer_profile: { avatar: "" },
           first_name: tgUser.firstName.replace(/[^a-zA-Z]/g, '') || 'User',
           is_bot_user: true,
           is_premium: tgUser.isPremium || false,
           kyc_status: "PENDING",
           language_code: tgUser.languageCode || "en",
           last_name: tgUser.lastName || "",
-          phone_number: "", 
+          phone_number: "", // Intentionally empty for first step
           registration_status: "SELF",
           telegram_id: tgUser.id,
           username: tgUser.username || ""
         };
 
-        console.log("Sending Payload:", payload);
-
-        // 3. Send to Backend
         const headers: Record<string, string> = {
           'Content-Type': "application/json",
           'X-Channel-Id': "telegram",
           'X-Timestamp': new Date().toISOString(),
           'X-App-Version': "1.0.0",
         };
-
-        if (initDataRaw) {
-          headers['X-Telegram-Init'] = initDataRaw;
-        }
+        if (initDataRaw) headers['X-Telegram-Init'] = initDataRaw;
 
         const response = await fetch(`${BACKEND_URL}/api/v1/customers/checkTelegramID`, {
           method: 'POST',
@@ -195,90 +205,117 @@ export default function RegistrationFlow() {
         });
 
         if (!response.ok) {
-          // Try to parse error message from backend, fallback to status text
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.message || `Server error: ${response.statusText}`);
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.message || `Server error: ${response.statusText}`);
         }
 
-        const responseData = await response.json();
-        console.log("Registration Success:", responseData);
-        
-        // Success State
-        setStatus('registered');
+        // --- SUCCESS: Move to Phone Entry Step ---
+        console.log("Telegram ID Verified. Moving to Phone Entry.");
+        setStatus('phone-entry');
 
       } catch (err: any) {
-        console.error("Registration failed:", err);
+        console.error("Initial check failed:", err);
         setErrorMessage(err.message || "Unknown error occurred");
         setStatus('error');
       }
     };
 
-    performRegistration();
+    performCheck();
   }, []);
 
-  // --- UI STATES ---
 
+  // 2. SUBMIT PHONE NUMBER (New Logic)
+  const handlePhoneSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!currentUser || !phoneNumber) return;
+    
+    // Basic validation
+    if (phoneNumber.length < 5) {
+      alert("Please enter a valid phone number");
+      return;
+    }
+
+    setStatus('submitting-phone');
+
+    try {
+      const payload: ShareContactPayload = {
+        phone_number: phoneNumber,
+        telegram_id: currentUser.id
+      };
+
+      console.log("Submitting Phone Payload:", payload);
+
+      const headers: Record<string, string> = {
+        'Content-Type': "application/json",
+        'X-Channel-Id': "telegram",
+        'X-Timestamp': new Date().toISOString(),
+        'X-App-Version': "1.0.0",
+      };
+      if (initDataRawString) headers['X-Telegram-Init'] = initDataRawString;
+
+      const response = await fetch(`${BACKEND_URL}/api/v1/customers/share-contact`, {
+        method: 'POST', 
+        headers,
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || `Phone submission failed: ${response.statusText}`);
+      }
+
+      const responseData = await response.json();
+      console.log("Phone Registration Success:", responseData);
+      
+      setStatus('completed');
+
+    } catch (err: any) {
+      console.error("Phone submission failed:", err);
+      setErrorMessage(err.message || "Failed to save phone number");
+      setStatus('error');
+    }
+  };
+
+
+  // --- UI RENDERING ---
+
+  // 1. Unsupported Environment
   if (status === 'invalid-environment') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-6 text-center">
         <div className="bg-yellow-100 p-4 rounded-full mb-4">
-          <svg className="w-8 h-8 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+          <span className="text-2xl">⚠️</span>
         </div>
         <h2 className="text-xl font-bold text-gray-900 mb-2">Unsupported Environment</h2>
         <p className="text-gray-600 mb-6 max-w-xs mx-auto">
-          This application is designed to be used inside the Telegram app. Please open it from your Telegram bot.
+          Please open this inside the Telegram App.
         </p>
-        {debugDetails && (
-          <div className="mt-4 text-sm text-gray-500 bg-gray-100 rounded-md p-4 w-full max-w-sm">
-            <p className="font-semibold mb-1">Debug info</p>
-            <p>initData source: {debugDetails.initDataSource ?? 'none'}</p>
-            <p>User detected: {debugDetails.user ? 'yes' : 'no'}</p>
-            {debugDetails.user && (
-              <>
-                <p>ID: {debugDetails.user.id}</p>
-                <p>Username: {debugDetails.user.username || '(none)'}</p>
-              </>
-            )}
-          </div>
-        )}
       </div>
     );
   }
 
-  if (status === 'checking') {
+  // 2. Loading State (Checking ID or Submitting Phone)
+  if (status === 'checking' || status === 'submitting-phone') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 text-gray-800">
         <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-        <p className="font-medium animate-pulse">Verifying Account...</p>
+        <p className="font-medium animate-pulse">
+            {status === 'checking' ? 'Verifying Account...' : 'Saving Contact Info...'}
+        </p>
       </div>
     );
   }
 
+  // 3. Error State
   if (status === 'error') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-red-50 p-6 text-center">
         <div className="bg-red-100 p-4 rounded-full mb-4">
-          <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            <span className="text-2xl">❌</span>
         </div>
-        <h2 className="text-xl font-bold text-gray-900 mb-2">Connection Failed</h2>
+        <h2 className="text-xl font-bold text-gray-900 mb-2">Something went wrong</h2>
         <p className="text-gray-600 mb-6 max-w-xs mx-auto">{errorMessage}</p>
-        {debugDetails && (
-          <div className="mt-4 text-sm text-gray-500 bg-gray-100 rounded-md p-4 w-full max-w-sm">
-            <p className="font-semibold mb-1">Debug info</p>
-            <p>initData source: {debugDetails.initDataSource ?? 'unknown'}</p>
-            {debugDetails.user && (
-              <>
-                <p>ID: {debugDetails.user.id}</p>
-                <p>Username: {debugDetails.user.username || '(none)'}</p>
-              </>
-            )}
-            {debugDetails.initDataRawPreview && (
-              <p className="mt-1 break-all">
-                initData preview: {debugDetails.initDataRawPreview}
-              </p>
-            )}
-          </div>
-        )}
         <button 
           onClick={() => window.location.reload()} 
           className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-6 rounded-lg transition-colors"
@@ -289,18 +326,70 @@ export default function RegistrationFlow() {
     );
   }
 
-  if (status === 'registered') {
+  // 4. PHONE ENTRY STEP (After 'registered' becomes true)
+  if (status === 'phone-entry') {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-green-50 text-center p-6">
-        <div className="bg-green-100 p-4 rounded-full mb-4">
-          <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+      <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6">
+        <div className="w-full max-w-sm">
+            <div className="text-center mb-8">
+                <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <span className="text-3xl">📱</span>
+                </div>
+                <h1 className="text-2xl font-bold text-gray-900">Next Step</h1>
+                <p className="text-gray-500 mt-2">
+                    Please provide your phone number to complete the registration.
+                </p>
+            </div>
+
+            <form onSubmit={handlePhoneSubmit} className="space-y-4">
+                <div>
+                    <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-1">
+                        Phone Number
+                    </label>
+                    <input
+                        id="phone"
+                        type="tel"
+                        placeholder="+251..."
+                        value={phoneNumber}
+                        onChange={(e) => setPhoneNumber(e.target.value)}
+                        className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-gray-900 placeholder-gray-400"
+                        required
+                    />
+                </div>
+
+                <button
+                    type="submit"
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg transform transition hover:scale-[1.02] active:scale-95"
+                >
+                    Continue
+                </button>
+            </form>
+            
+            <p className="text-xs text-center text-gray-400 mt-6">
+                Your number is securely sent to our banking server.
+            </p>
         </div>
-        <h1 className="text-2xl font-bold text-gray-900">Welcome!</h1>
-        <p className="text-gray-600 mt-2">Your account has been verified.</p>
-        {/* You can auto-redirect here using router.push('/dashboard') */}
       </div>
     );
   }
 
-  return null; // Idle state (rarely visible due to useEffect)
+  // 5. Final Success State
+  if (status === 'completed') {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-green-50 text-center p-6">
+        <div className="bg-green-100 p-4 rounded-full mb-4 animate-bounce">
+            <span className="text-4xl">✅</span>
+        </div>
+        <h1 className="text-2xl font-bold text-gray-900">All Set!</h1>
+        <p className="text-gray-600 mt-2">Your registration is complete.</p>
+        
+        {/* Placeholder for Dashboard Redirect */}
+        <button className="mt-8 bg-green-600 text-white px-8 py-3 rounded-full font-semibold shadow-lg">
+            Go to Dashboard
+        </button>
+      </div>
+    );
+  }
+
+  return null;
 }
