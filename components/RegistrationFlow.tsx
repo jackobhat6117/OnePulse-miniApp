@@ -92,13 +92,13 @@ type AppStatus =
   | 'checking'            // 1. Verifying Telegram ID
   | 'id-verified'         // 2. Success screen for ID
   | 'phone-entry'         // 3. User enters phone
-  | 'processing-registration' // 4. Share Contact -> Device Session -> SIM Verify
+  | 'processing-registration' // 4. Loading: Share Contact -> Device Session -> SIM Verify
   | 'otp-entry'           // 5. User enters OTP
-  | 'verifying-otp'       // 6. Validating OTP
+  | 'verifying-otp'       // 6. Loading: Validating OTP
   | 'account-entry'       // 7. User enters Account Number
-  | 'processing-customer' // 8. Verify Customer -> Product Validation
+  | 'processing-customer' // 8. Loading: Verify Customer -> Product Validation
   | 'pin-setup'           // 9. User enters PIN
-  | 'registering-onepulse'// 10. Final Registration Call
+  | 'registering-onepulse'// 10. Loading: Final Registration Call
   | 'completed'           // 11. All done
   | 'error' 
   | 'invalid-environment';
@@ -168,10 +168,11 @@ const ScreenHeader = ({ title, subtitle, onBack }: { title: string, subtitle?: R
     {onBack && (
       <button 
         onClick={onBack}
-        className="absolute left-0 top-1 p-2 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-full transition-colors"
+        className="absolute left-0 top-1 p-2 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-full transition-colors focus:outline-none"
         type="button"
         aria-label="Go Back"
       >
+        {/* Simple Back Arrow SVG */}
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
           <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
         </svg>
@@ -190,6 +191,9 @@ export default function RegistrationFlow() {
   const [errorMessage, setErrorMessage] = useState('');
   const [debugDetails, setDebugDetails] = useState<DebugDetails | null>(null);
   
+  // We need to remember where we were if an error happens, so we can retry or go back
+  const [lastActiveStatus, setLastActiveStatus] = useState<AppStatus>('idle');
+
   // Input States
   const [phoneNumber, setPhoneNumber] = useState('');
   const [activationCode, setActivationCode] = useState('');
@@ -209,6 +213,8 @@ export default function RegistrationFlow() {
   const hasChecked = useRef(false);
 
   // --- NAVIGATION LOGIC ---
+
+  // 1. General Back Handler (Used in Normal Flow)
   const handleBack = () => {
     switch (status) {
       case 'phone-entry':
@@ -218,14 +224,48 @@ export default function RegistrationFlow() {
         setStatus('phone-entry');
         break;
       case 'account-entry':
-        // Allow going back to phone entry if they realize they used the wrong number
         setStatus('phone-entry'); 
         break;
       case 'pin-setup':
         setStatus('account-entry');
         break;
+      case 'error':
+        // If in error state, handleBack should probably behave like "Cancel/Go Previous"
+        handleErrorBack();
+        break;
       default:
         console.warn("Back not handled for status:", status);
+    }
+  };
+
+  // 2. Error Screen "Retry" Handler (Go back to the form you were just on)
+  const handleRetry = () => {
+    if (lastActiveStatus !== 'idle') {
+      setStatus(lastActiveStatus);
+    } else {
+      window.location.reload();
+    }
+  };
+
+  // 3. Error Screen "Back" Handler (Go to the step BEFORE the one that failed)
+  const handleErrorBack = () => {
+    // Determine where to go based on where we failed
+    switch (lastActiveStatus) {
+      case 'phone-entry':
+        setStatus('id-verified');
+        break;
+      case 'otp-entry':
+        setStatus('phone-entry');
+        break;
+      case 'account-entry':
+        setStatus('phone-entry');
+        break;
+      case 'pin-setup':
+        setStatus('account-entry');
+        break;
+      default:
+        // Fallback for initialization errors
+        window.location.reload(); 
     }
   };
 
@@ -358,7 +398,7 @@ export default function RegistrationFlow() {
       };
       await authenticatedFetch('/api/v1/customers/share-contact', contactPayload);
 
-      // 2. Start Session (Robust Fetch)
+      // 2. Start Session
       setLoadingMessage('Initializing Secure Session...');
       const deviceInfo = await getDeviceInfo();
       setCachedDeviceInfo(deviceInfo); 
@@ -370,8 +410,6 @@ export default function RegistrationFlow() {
       };
       
       const sessionRes = await authenticatedFetch('/api/v1/device-session-start', sessionPayload);
-      
-      // Capture session_id if available, else use device_id as fallback
       const newSessionId = sessionRes.data?.session_id || deviceInfo.device_id; 
       setSessionId(newSessionId);
 
@@ -392,6 +430,7 @@ export default function RegistrationFlow() {
       } else {
         setErrorMessage(err.message);
       }
+      setLastActiveStatus('phone-entry'); // Save where we were
       setStatus('error');
     }
   };
@@ -413,6 +452,7 @@ export default function RegistrationFlow() {
       setStatus('account-entry');
     } catch (err: any) {
       setErrorMessage(err.message);
+      setLastActiveStatus('otp-entry'); // Save where we were
       setStatus('error');
     }
   };
@@ -448,7 +488,6 @@ export default function RegistrationFlow() {
       };
       const customerRes = await authenticatedFetch('/api/v1/verifyCustomer', customerPayload);
       
-      // Capture Data from Response
       const custData = customerRes.data;
       if (!custData || !custData.customer_id || !custData.product_code) {
         throw new Error("Invalid customer data received.");
@@ -460,18 +499,18 @@ export default function RegistrationFlow() {
       // 2. Product Validation
       setLoadingMessage('Validating Product Eligibility...');
       const productPayload: ProductValidationPayload = {
-        channel: "ussd",
-        customer_group: "noncoroporate", 
+        channel: "TELEGRAM",
+        customer_group: "DEFAULT", // Logic: Default or derived
         product_code: custData.product_code,
-        tier_group: "1"
+        tier_group: "DEFAULT"
       };
       await authenticatedFetch('/api/v1/product-validation', productPayload);
 
-      // Success -> Move to PIN Setup
       setStatus('pin-setup');
 
     } catch (err: any) {
       setErrorMessage(err.message);
+      setLastActiveStatus('account-entry'); // Save where we were
       setStatus('error');
     }
   };
@@ -503,6 +542,7 @@ export default function RegistrationFlow() {
 
     } catch (err: any) {
       setErrorMessage(err.message);
+      setLastActiveStatus('pin-setup'); // Save where we were
       setStatus('error');
     }
   };
@@ -542,16 +582,30 @@ export default function RegistrationFlow() {
   if (status === 'error') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-red-50 p-6 text-center">
-        <div className="bg-red-100 p-4 rounded-full mb-4">
+        {/* Error Header with Back Button */}
+        <div className="w-full max-w-sm relative">
+            <button 
+                onClick={handleErrorBack}
+                className="absolute left-0 top-0 p-2 text-red-700 hover:bg-red-100 rounded-full transition-colors"
+                aria-label="Go Back"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+                </svg>
+            </button>
+        </div>
+
+        <div className="bg-red-100 p-4 rounded-full mb-4 mt-8">
           <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
         </div>
         <h2 className="text-xl font-bold text-gray-900 mb-2">Connection Failed</h2>
         <p className="text-gray-600 mb-6 break-words max-w-xs mx-auto">{errorMessage}</p>
+        
         <button 
-          onClick={() => window.location.reload()} 
+          onClick={handleRetry} 
           className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-6 rounded-lg transition-colors"
         >
-          Retry
+          Try Again
         </button>
       </div>
     );
