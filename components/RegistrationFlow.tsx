@@ -162,6 +162,26 @@ const getInitDataFromUrl = (): string | undefined => {
   return undefined;
 };
 
+// --- UI COMPONENT: HEADER WITH BACK BUTTON ---
+const ScreenHeader = ({ title, subtitle, onBack }: { title: string, subtitle?: React.ReactNode, onBack?: () => void }) => (
+  <div className="text-center mb-8 relative">
+    {onBack && (
+      <button 
+        onClick={onBack}
+        className="absolute left-0 top-1 p-2 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-full transition-colors"
+        type="button"
+        aria-label="Go Back"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+        </svg>
+      </button>
+    )}
+    <h1 className="text-2xl font-bold text-gray-900 pt-2">{title}</h1>
+    {subtitle && <p className="text-gray-500 mt-2 text-sm">{subtitle}</p>}
+  </div>
+);
+
 // --- MAIN COMPONENT ---
 
 export default function RegistrationFlow() {
@@ -187,6 +207,27 @@ export default function RegistrationFlow() {
   const [productCode, setProductCode] = useState('');
 
   const hasChecked = useRef(false);
+
+  // --- NAVIGATION LOGIC ---
+  const handleBack = () => {
+    switch (status) {
+      case 'phone-entry':
+        setStatus('id-verified');
+        break;
+      case 'otp-entry':
+        setStatus('phone-entry');
+        break;
+      case 'account-entry':
+        // Allow going back to phone entry if they realize they used the wrong number
+        setStatus('phone-entry'); 
+        break;
+      case 'pin-setup':
+        setStatus('account-entry');
+        break;
+      default:
+        console.warn("Back not handled for status:", status);
+    }
+  };
 
   // --- FETCH WRAPPER ---
   const authenticatedFetch = async (url: string, payload: any) => {
@@ -227,21 +268,19 @@ export default function RegistrationFlow() {
       setLoadingMessage('Verifying Account...');
       try {
         // --- Retrieve Telegram Data ---
-        let initData: any;
         let initDataRaw: string | undefined;
         try {
           const params = retrieveLaunchParams();
-          initData = params.initData;
           initDataRaw = typeof params.initDataRaw === 'string' ? params.initDataRaw : undefined;
         } catch (e) { /* Ignore SDK error */ }
 
-        let tgUser = initData?.user as TelegramUser | undefined;
-        let initSource: DebugDetails['initDataSource'] = tgUser ? 'sdk' : undefined;
+        let tgUser = undefined as TelegramUser | undefined;
+        let initSource: DebugDetails['initDataSource'];
 
         if (typeof window !== 'undefined') {
           const webApp = (window as any).Telegram?.WebApp;
           const unsafeUser = webApp?.initDataUnsafe?.user as UnsafeTelegramUser;
-          if (!tgUser && unsafeUser) {
+          if (unsafeUser) {
              tgUser = mapUnsafeUser(unsafeUser);
              initSource = 'unsafe';
           }
@@ -319,7 +358,7 @@ export default function RegistrationFlow() {
       };
       await authenticatedFetch('/api/v1/customers/share-contact', contactPayload);
 
-      // 2. Start Session
+      // 2. Start Session (Robust Fetch)
       setLoadingMessage('Initializing Secure Session...');
       const deviceInfo = await getDeviceInfo();
       setCachedDeviceInfo(deviceInfo); 
@@ -421,10 +460,10 @@ export default function RegistrationFlow() {
       // 2. Product Validation
       setLoadingMessage('Validating Product Eligibility...');
       const productPayload: ProductValidationPayload = {
-        channel: "telegram",
-        customer_group: "noncorporate", // Logic: Default or derived
+        channel: "TELEGRAM",
+        customer_group: "DEFAULT", // Logic: Default or derived
         product_code: custData.product_code,
-        tier_group: "1"
+        tier_group: "DEFAULT"
       };
       await authenticatedFetch('/api/v1/product-validation', productPayload);
 
@@ -548,40 +587,15 @@ export default function RegistrationFlow() {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 animate-in slide-in-from-right duration-300">
         <div className="w-full max-w-sm">
-            <div className="text-center mb-8">
-                <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <span className="text-3xl">📱</span>
-                </div>
-                <h1 className="text-2xl font-bold text-gray-900">Share Contact</h1>
-                <p className="text-gray-500 mt-2">
-                    Enter your phone number to complete registration.
-                </p>
-            </div>
-
-            <form onSubmit={handlePhoneSubmit} className="space-y-4">
-                <div>
-                    <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-1">
-                        Phone Number
-                    </label>
-                    <input
-                        id="phone"
-                        type="tel"
-                        placeholder="+254..."
-                        value={phoneNumber}
-                        onChange={(e) => setPhoneNumber(e.target.value)}
-                        className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-gray-900"
-                        required
-                        autoFocus
-                    />
-                </div>
-
-                <button
-                    type="submit"
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg transform transition hover:scale-[1.02] active:scale-95"
-                >
-                    Next
-                </button>
-            </form>
+          <ScreenHeader 
+            title="Share Contact" 
+            subtitle="Enter your phone number to complete registration."
+            onBack={handleBack} 
+          />
+          <form onSubmit={handlePhoneSubmit} className="space-y-4">
+            <input type="tel" placeholder="+254..." value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none" required />
+            <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg">Next</button>
+          </form>
         </div>
       </div>
     );
@@ -592,42 +606,16 @@ export default function RegistrationFlow() {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 animate-in slide-in-from-right duration-300">
         <div className="w-full max-w-sm">
-            <div className="text-center mb-8">
-                <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <span className="text-3xl">🔐</span>
-                </div>
-                <h1 className="text-2xl font-bold text-gray-900">Enter Code</h1>
-                <p className="text-gray-500 mt-2">
-                    We sent an activation code to <br/><span className="font-semibold text-gray-800">{phoneNumber}</span>
-                </p>
-            </div>
-
+            <ScreenHeader 
+                title="Enter Code" 
+                subtitle={<>We sent an activation code to <br/><span className="font-semibold text-gray-800">{phoneNumber}</span></>}
+                onBack={handleBack} 
+            />
             <form onSubmit={handleOtpSubmit} className="space-y-6">
-                <input
-                    type="text"
-                    placeholder="000000"
-                    value={activationCode}
-                    onChange={(e) => setActivationCode(e.target.value)}
-                    className="w-full px-4 py-4 text-center text-2xl tracking-widest rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none transition-all text-gray-900"
-                    maxLength={6}
-                    required
-                    autoFocus
-                />
-
-                <button
-                    type="submit"
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg transform transition hover:scale-[1.02] active:scale-95"
-                >
-                    Verify
-                </button>
+                <input type="text" placeholder="000000" value={activationCode} onChange={(e) => setActivationCode(e.target.value)} className="w-full px-4 py-4 text-center text-2xl tracking-widest rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none" maxLength={6} required autoFocus />
+                <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg">Verify</button>
             </form>
-            
-            <button 
-                onClick={handleResendCode}
-                className="w-full mt-6 text-sm text-blue-600 font-semibold hover:underline"
-            >
-                Resend Code
-            </button>
+            <button onClick={handleResendCode} className="w-full mt-6 text-sm text-blue-600 font-semibold hover:underline">Resend Code</button>
         </div>
       </div>
     );
@@ -638,38 +626,14 @@ export default function RegistrationFlow() {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 animate-in slide-in-from-right duration-300">
         <div className="w-full max-w-sm">
-            <div className="text-center mb-8">
-                <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <span className="text-3xl">🏦</span>
-                </div>
-                <h1 className="text-2xl font-bold text-gray-900">Link Bank Account</h1>
-                <p className="text-gray-500 mt-2">
-                    Enter your account number to finalize the setup.
-                </p>
-            </div>
-
+            <ScreenHeader 
+                title="Link Bank Account" 
+                subtitle="Enter your account number to finalize the setup."
+                onBack={handleBack} 
+            />
             <form onSubmit={handleAccountSubmit} className="space-y-4">
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Account Number
-                    </label>
-                    <input
-                        type="text"
-                        placeholder="e.g. 1000..."
-                        value={accountNumber}
-                        onChange={(e) => setAccountNumber(e.target.value)}
-                        className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none transition-all text-gray-900"
-                        required
-                        autoFocus
-                    />
-                </div>
-
-                <button
-                    type="submit"
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg transform transition hover:scale-[1.02] active:scale-95"
-                >
-                    Link Account
-                </button>
+                <input type="text" placeholder="Account Number" value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none" required autoFocus />
+                <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg">Link Account</button>
             </form>
         </div>
       </div>
@@ -681,23 +645,18 @@ export default function RegistrationFlow() {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 animate-in slide-in-from-right duration-300">
         <div className="w-full max-w-sm">
-            <div className="text-center mb-8">
-                <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <span className="text-3xl">🔒</span>
-                </div>
-                <h1 className="text-2xl font-bold text-gray-900">Set Your PIN</h1>
-                <p className="text-gray-500 mt-2">
-                    Create a secure 4-digit PIN for your account.
-                </p>
-            </div>
-
+            <ScreenHeader 
+                title="Set Your PIN" 
+                subtitle="Create a secure 4-digit PIN for your account."
+                onBack={handleBack} 
+            />
             <form onSubmit={handlePinSubmit} className="space-y-6">
                 <input
                     type="password"
                     placeholder="Enter 4-digit PIN"
                     value={pin}
                     onChange={(e) => setPin(e.target.value.replace(/[^0-9]/g, '').slice(0, 4))}
-                    className="w-full px-4 py-4 text-center text-2xl tracking-widest rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none transition-all text-gray-900"
+                    className="w-full px-4 py-4 text-center text-2xl tracking-widest rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none"
                     maxLength={4}
                     required
                     autoFocus
