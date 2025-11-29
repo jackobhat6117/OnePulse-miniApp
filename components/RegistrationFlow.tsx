@@ -16,7 +16,8 @@ interface TelegramUser {
   isPremium?: boolean;
 }
 
-// API Payloads
+// --- PAYLOAD INTERFACES ---
+
 interface CheckIdPayload {
   allowed_financial_actions: string[];
   customer_profile: { avatar: string };
@@ -67,18 +68,38 @@ interface VerifyCustomerPayload {
   telegram_id: string;
 }
 
-// App Flow Status
+interface ProductValidationPayload {
+  channel: string;
+  customer_group: string;
+  product_code: string;
+  tier_group: string;
+}
+
+interface OnePulseRegistrationPayload {
+  account_number: string;
+  customer_id: string;
+  device_id: string;
+  phone_number: string;
+  pin: string;
+  session_id: string;
+  telegram_id: string;
+}
+
+// --- APP STATUS ---
+
 type AppStatus = 
   | 'idle' 
   | 'checking'            // 1. Verifying Telegram ID
-  | 'id-verified'         // 2. Success screen for ID (Wait for Continue)
+  | 'id-verified'         // 2. Success screen for ID
   | 'phone-entry'         // 3. User enters phone
-  | 'processing-registration' // 4. Combined Loading: Share Contact -> Device Session -> SIM Verify
+  | 'processing-registration' // 4. Share Contact -> Device Session -> SIM Verify
   | 'otp-entry'           // 5. User enters OTP
   | 'verifying-otp'       // 6. Validating OTP
   | 'account-entry'       // 7. User enters Account Number
-  | 'verifying-customer'  // 8. Validating Account
-  | 'completed'           // 9. All done
+  | 'processing-customer' // 8. Verify Customer -> Product Validation
+  | 'pin-setup'           // 9. User enters PIN
+  | 'registering-onepulse'// 10. Final Registration Call
+  | 'completed'           // 11. All done
   | 'error' 
   | 'invalid-environment';
 
@@ -149,14 +170,21 @@ export default function RegistrationFlow() {
   const [errorMessage, setErrorMessage] = useState('');
   const [debugDetails, setDebugDetails] = useState<DebugDetails | null>(null);
   
-  // Data States
+  // Input States
   const [phoneNumber, setPhoneNumber] = useState('');
   const [activationCode, setActivationCode] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
+  const [pin, setPin] = useState('');
   
+  // Data States
   const [currentUser, setCurrentUser] = useState<TelegramUser | null>(null);
   const [initDataRawString, setInitDataRawString] = useState<string | undefined>(undefined);
   const [cachedDeviceInfo, setCachedDeviceInfo] = useState<DeviceInfoPayload | null>(null);
+  
+  // Verified Data States (Captured from backend responses)
+  const [sessionId, setSessionId] = useState(''); 
+  const [customerId, setCustomerId] = useState('');
+  const [productCode, setProductCode] = useState('');
 
   const hasChecked = useRef(false);
 
@@ -205,7 +233,7 @@ export default function RegistrationFlow() {
           const params = retrieveLaunchParams();
           initData = params.initData;
           initDataRaw = typeof params.initDataRaw === 'string' ? params.initDataRaw : undefined;
-        } catch (e) { /* Ignore SDK error, use fallback */ }
+        } catch (e) { /* Ignore SDK error */ }
 
         let tgUser = initData?.user as TelegramUser | undefined;
         let initSource: DebugDetails['initDataSource'] = tgUser ? 'sdk' : undefined;
@@ -261,8 +289,6 @@ export default function RegistrationFlow() {
         };
 
         await authenticatedFetch('/api/v1/customers/checkTelegramID', payload);
-        
-        // Success -> Show ID Verified Screen
         setStatus('id-verified');
 
       } catch (err: any) {
@@ -275,19 +301,15 @@ export default function RegistrationFlow() {
     performCheck();
   }, []);
 
-  // Handler: Move from ID Verified -> Phone Entry
-  const handleContinueToPhone = () => {
-    setStatus('phone-entry');
-  };
+  const handleContinueToPhone = () => setStatus('phone-entry');
 
-  // Handler: Submit Phone (Runs 3 APIs in sequence)
+  // STEP 2: Phone -> Session -> SIM
   const handlePhoneSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser || !phoneNumber) return;
     if (phoneNumber.length < 5) { alert("Invalid phone"); return; }
 
     setStatus('processing-registration');
-    
     try {
       // 1. Share Contact
       setLoadingMessage('Saving Contact Info...');
@@ -300,14 +322,19 @@ export default function RegistrationFlow() {
       // 2. Start Session
       setLoadingMessage('Initializing Secure Session...');
       const deviceInfo = await getDeviceInfo();
-      setCachedDeviceInfo(deviceInfo); // Cache for step 4
+      setCachedDeviceInfo(deviceInfo); 
 
       const sessionPayload: DeviceSessionPayload = {
         device_info: deviceInfo,
         phone_number: phoneNumber,
         telegram_id: currentUser.id.toString()
       };
-      await authenticatedFetch('/api/v1/device-session-start', sessionPayload);
+      
+      const sessionRes = await authenticatedFetch('/api/v1/device-session-start', sessionPayload);
+      
+      // Capture session_id if available, else use device_id as fallback
+      const newSessionId = sessionRes.data?.session_id || deviceInfo.device_id; 
+      setSessionId(newSessionId);
 
       // 3. SIM Verify
       setLoadingMessage('Verifying Device Security...');
@@ -318,17 +345,19 @@ export default function RegistrationFlow() {
       };
       await authenticatedFetch('/api/v1/SIM-Verify', simPayload);
 
-      // All background checks passed -> Go to OTP
       setStatus('otp-entry');
 
     } catch (err: any) {
-      console.error("Registration flow failed:", err);
-      setErrorMessage(err.message);
+      if (err.message.includes("does not match")) {
+        setErrorMessage("Phone number linked to another account.");
+      } else {
+        setErrorMessage(err.message);
+      }
       setStatus('error');
     }
   };
 
-  // Handler: Verify OTP
+  // STEP 3: OTP Verification
   const handleOtpSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser) return;
@@ -342,8 +371,6 @@ export default function RegistrationFlow() {
         telegram_id: currentUser.id.toString()
       };
       await authenticatedFetch('/api/v1/verifyCode', payload);
-      
-      // Success -> Go to Account Linking
       setStatus('account-entry');
     } catch (err: any) {
       setErrorMessage(err.message);
@@ -365,34 +392,84 @@ export default function RegistrationFlow() {
     }
   };
 
-  // Handler: Verify Customer (Account Linking)
+  // STEP 4: Account Verify -> Product Validation
   const handleAccountSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser || !cachedDeviceInfo) return;
 
-    setStatus('verifying-customer');
-    setLoadingMessage('Linking Bank Account...');
+    setStatus('processing-customer');
+    setLoadingMessage('Verifying Bank Account...');
     try {
-      const payload: VerifyCustomerPayload = {
+      // 1. Verify Customer
+      const customerPayload: VerifyCustomerPayload = {
         account_number: accountNumber,
         device_id: cachedDeviceInfo.device_id,
         phone_number: phoneNumber,
         telegram_id: currentUser.id.toString()
       };
-      await authenticatedFetch('/api/v1/verifyCustomer', payload);
+      const customerRes = await authenticatedFetch('/api/v1/verifyCustomer', customerPayload);
+      
+      // Capture Data from Response
+      const custData = customerRes.data;
+      if (!custData || !custData.customer_id || !custData.product_code) {
+        throw new Error("Invalid customer data received.");
+      }
+      
+      setCustomerId(custData.customer_id);
+      setProductCode(custData.product_code);
 
-      // Success -> Final Screen
-      setStatus('completed');
+      // 2. Product Validation
+      setLoadingMessage('Validating Product Eligibility...');
+      const productPayload: ProductValidationPayload = {
+        channel: "TELEGRAM",
+        customer_group: "DEFAULT", // Logic: Default or derived
+        product_code: custData.product_code,
+        tier_group: "DEFAULT"
+      };
+      await authenticatedFetch('/api/v1/product-validation', productPayload);
+
+      // Success -> Move to PIN Setup
+      setStatus('pin-setup');
+
     } catch (err: any) {
       setErrorMessage(err.message);
       setStatus('error');
     }
   };
 
+  // STEP 5: PIN Setup -> Final Registration
+  const handlePinSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentUser || !cachedDeviceInfo || !pin) return;
+    
+    if (pin.length < 4) { alert("PIN must be at least 4 digits"); return; }
+
+    setStatus('registering-onepulse');
+    setLoadingMessage('Finalizing Registration...');
+
+    try {
+      const payload: OnePulseRegistrationPayload = {
+        account_number: accountNumber,
+        customer_id: customerId,
+        device_id: cachedDeviceInfo.device_id,
+        phone_number: phoneNumber,
+        pin: pin,
+        session_id: sessionId,
+        telegram_id: currentUser.id.toString()
+      };
+
+      await authenticatedFetch('/api/v1/onepulse-registration', payload);
+
+      setStatus('completed');
+
+    } catch (err: any) {
+      setErrorMessage(err.message);
+      setStatus('error');
+    }
+  };
 
   // --- UI RENDERERS ---
 
-  // 1. Invalid Environment (Original UI restored)
   if (status === 'invalid-environment') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-6 text-center">
@@ -413,8 +490,8 @@ export default function RegistrationFlow() {
     );
   }
 
-  // 2. Loading State (Shared)
-  if (['checking', 'processing-registration', 'verifying-otp', 'verifying-customer'].includes(status)) {
+  // Generic Loading
+  if (['checking', 'processing-registration', 'verifying-otp', 'processing-customer', 'registering-onepulse'].includes(status)) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 text-gray-800">
         <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
@@ -423,7 +500,6 @@ export default function RegistrationFlow() {
     );
   }
 
-  // 3. Error State (Original UI restored)
   if (status === 'error') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-red-50 p-6 text-center">
@@ -431,7 +507,7 @@ export default function RegistrationFlow() {
           <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
         </div>
         <h2 className="text-xl font-bold text-gray-900 mb-2">Connection Failed</h2>
-        <p className="text-gray-600 mb-6 max-w-xs mx-auto break-words">{errorMessage}</p>
+        <p className="text-gray-600 mb-6 break-words max-w-xs mx-auto">{errorMessage}</p>
         <button 
           onClick={() => window.location.reload()} 
           className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-6 rounded-lg transition-colors"
@@ -442,7 +518,7 @@ export default function RegistrationFlow() {
     );
   }
 
-  // 4. ID Verified Screen (Clean UI)
+  // ID Verified
   if (status === 'id-verified') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 animate-in fade-in duration-300">
@@ -467,7 +543,7 @@ export default function RegistrationFlow() {
     );
   }
 
-  // 5. Phone Entry Screen
+  // Phone Entry
   if (status === 'phone-entry') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 animate-in slide-in-from-right duration-300">
@@ -511,7 +587,7 @@ export default function RegistrationFlow() {
     );
   }
 
-  // 6. OTP Entry Screen
+  // OTP Entry
   if (status === 'otp-entry') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 animate-in slide-in-from-right duration-300">
@@ -557,7 +633,7 @@ export default function RegistrationFlow() {
     );
   }
 
-  // 7. Account Entry Screen
+  // Account Entry
   if (status === 'account-entry') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 animate-in slide-in-from-right duration-300">
@@ -600,7 +676,46 @@ export default function RegistrationFlow() {
     );
   }
 
-  // 8. Completed Screen
+  // PIN Setup
+  if (status === 'pin-setup') {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 animate-in slide-in-from-right duration-300">
+        <div className="w-full max-w-sm">
+            <div className="text-center mb-8">
+                <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <span className="text-3xl">🔒</span>
+                </div>
+                <h1 className="text-2xl font-bold text-gray-900">Set Your PIN</h1>
+                <p className="text-gray-500 mt-2">
+                    Create a secure 4-digit PIN for your account.
+                </p>
+            </div>
+
+            <form onSubmit={handlePinSubmit} className="space-y-6">
+                <input
+                    type="password"
+                    placeholder="Enter 4-digit PIN"
+                    value={pin}
+                    onChange={(e) => setPin(e.target.value.replace(/[^0-9]/g, '').slice(0, 4))}
+                    className="w-full px-4 py-4 text-center text-2xl tracking-widest rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none transition-all text-gray-900"
+                    maxLength={4}
+                    required
+                    autoFocus
+                />
+
+                <button
+                    type="submit"
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg transform transition hover:scale-[1.02] active:scale-95"
+                >
+                    Complete Registration
+                </button>
+            </form>
+        </div>
+      </div>
+    );
+  }
+
+  // Completed
   if (status === 'completed') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-green-50 text-center p-6">
@@ -608,9 +723,12 @@ export default function RegistrationFlow() {
             <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
         </div>
         <h1 className="text-2xl font-bold text-gray-900">All Set!</h1>
-        <p className="text-gray-600 mt-2">Your secure session is active.</p>
+        <p className="text-gray-600 mt-2">Registration successful.</p>
         
-        <button className="mt-8 bg-green-600 text-white px-8 py-3 rounded-full font-semibold shadow-lg">
+        <button 
+            onClick={() => alert("Go to Dashboard")} // Replace with router.push('/dashboard')
+            className="mt-8 bg-green-600 text-white px-8 py-3 rounded-full font-semibold shadow-lg"
+        >
             Go to Dashboard
         </button>
       </div>
