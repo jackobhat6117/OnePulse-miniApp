@@ -60,15 +60,22 @@ export const getDeviceInfo = async (): Promise<DeviceInfoPayload> => {
   let ipData = { ip: '0.0.0.0', city: 'Unknown', country_name: 'Unknown', latitude: 0, longitude: 0 };
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000); 
-    const res = await fetch('https://ipapi.co/json/', { signal: controller.signal });
+    const timeoutId = setTimeout(() => controller.abort(), 2000); // 2s timeout
+    
+    // We try to fetch, but we CATCH failures so the app doesn't crash
+    const res = await fetch('https://ipapi.co/json/', { signal: controller.signal })
+      .catch(() => null); // If network fails (CORS/Blocker), return null
+      
     clearTimeout(timeoutId);
-    if (res.ok) {
-        ipData = await res.json();
+
+    if (res && res.ok) {
+        const json = await res.json().catch(() => null);
+        if (json) ipData = json;
     }
   } catch (e) {
-    console.warn("IP fetch failed, defaulting values.");
+    console.warn("IP fetch failed safely, using defaults.");
   }
+
 
   const ua = navigator.userAgent;
   const osInfo = getOS(ua);
@@ -102,9 +109,11 @@ export const getDeviceInfo = async (): Promise<DeviceInfoPayload> => {
     // --- FIX ATTEMPT ---
     // Try sending 'true' temporarily. If this works, your backend has a bug 
     // where it rejects 'false'. If it fails, revert to 'hasTouch'.
+    //  touch_support: hasTouch,
     touch_support: true, 
     
     user_agent: ua,
     viewport_height: window.innerHeight
   };
 };
+
