@@ -16,7 +16,7 @@ interface TelegramUser {
   isPremium?: boolean;
 }
 
-// --- PAYLOAD INTERFACES ---
+// --- API PAYLOAD INTERFACES ---
 
 interface CheckIdPayload {
   allowed_financial_actions: string[];
@@ -89,17 +89,17 @@ interface OnePulseRegistrationPayload {
 
 type AppStatus = 
   | 'idle' 
-  | 'checking'            // 1. Verifying Telegram ID
-  | 'id-verified'         // 2. Success screen for ID
-  | 'phone-entry'         // 3. User enters phone
-  | 'processing-registration' // 4. Loading: Share Contact -> Device Session -> SIM Verify
-  | 'otp-entry'           // 5. User enters OTP
-  | 'verifying-otp'       // 6. Loading: Validating OTP
-  | 'account-entry'       // 7. User enters Account Number
-  | 'processing-customer' // 8. Loading: Verify Customer -> Product Validation
-  | 'pin-setup'           // 9. User enters PIN
-  | 'registering-onepulse'// 10. Loading: Final Registration Call
-  | 'completed'           // 11. All done
+  | 'checking'            
+  | 'id-verified'         
+  | 'phone-entry'         
+  | 'processing-registration' 
+  | 'otp-entry'           
+  | 'verifying-otp'       
+  | 'account-entry'       
+  | 'processing-customer' 
+  | 'pin-setup'           
+  | 'registering-onepulse'
+  | 'completed'           
   | 'error' 
   | 'invalid-environment';
 
@@ -168,18 +168,17 @@ const ScreenHeader = ({ title, subtitle, onBack }: { title: string, subtitle?: R
     {onBack && (
       <button 
         onClick={onBack}
-        className="absolute left-0 top-1 p-2 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-full transition-colors focus:outline-none"
+        className="absolute left-0 top-1 p-2 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-gray-200"
         type="button"
         aria-label="Go Back"
       >
-        {/* Simple Back Arrow SVG */}
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
           <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
         </svg>
       </button>
     )}
     <h1 className="text-2xl font-bold text-gray-900 pt-2">{title}</h1>
-    {subtitle && <p className="text-gray-500 mt-2 text-sm">{subtitle}</p>}
+    {subtitle && <p className="text-gray-500 mt-2 text-sm font-medium">{subtitle}</p>}
   </div>
 );
 
@@ -190,8 +189,6 @@ export default function RegistrationFlow() {
   const [loadingMessage, setLoadingMessage] = useState('Processing...');
   const [errorMessage, setErrorMessage] = useState('');
   const [debugDetails, setDebugDetails] = useState<DebugDetails | null>(null);
-  
-  // We need to remember where we were if an error happens, so we can retry or go back
   const [lastActiveStatus, setLastActiveStatus] = useState<AppStatus>('idle');
 
   // Input States
@@ -203,69 +200,41 @@ export default function RegistrationFlow() {
   // Data States
   const [currentUser, setCurrentUser] = useState<TelegramUser | null>(null);
   const [initDataRawString, setInitDataRawString] = useState<string | undefined>(undefined);
-  const [cachedDeviceInfo, setCachedDeviceInfo] = useState<DeviceInfoPayload | null>(null);
   
-  // Verified Data States (Captured from backend responses)
+  // *** CRITICAL DATA: FROM BACKEND RESPONSE ***
   const [sessionId, setSessionId] = useState(''); 
+  const [verifiedDeviceId, setVerifiedDeviceId] = useState(''); // The DeviceID returned by backend
+  const [deviceFingerprint, setDeviceFingerprint] = useState(''); // Client fingerprint for SIM check
+  
   const [customerId, setCustomerId] = useState('');
   const [productCode, setProductCode] = useState('');
 
   const hasChecked = useRef(false);
 
   // --- NAVIGATION LOGIC ---
-
-  // 1. General Back Handler (Used in Normal Flow)
   const handleBack = () => {
     switch (status) {
-      case 'phone-entry':
-        setStatus('id-verified');
-        break;
-      case 'otp-entry':
-        setStatus('phone-entry');
-        break;
-      case 'account-entry':
-        setStatus('phone-entry'); 
-        break;
-      case 'pin-setup':
-        setStatus('account-entry');
-        break;
-      case 'error':
-        // If in error state, handleBack should probably behave like "Cancel/Go Previous"
-        handleErrorBack();
-        break;
-      default:
-        console.warn("Back not handled for status:", status);
+      case 'phone-entry': setStatus('id-verified'); break;
+      case 'otp-entry': setStatus('phone-entry'); break;
+      case 'account-entry': setStatus('phone-entry'); break;
+      case 'pin-setup': setStatus('account-entry'); break;
+      case 'error': handleErrorBack(); break;
+      default: console.warn("Back not handled for status:", status);
     }
   };
 
-  // 2. Error Screen "Retry" Handler (Go back to the form you were just on)
   const handleRetry = () => {
-    if (lastActiveStatus !== 'idle') {
-      setStatus(lastActiveStatus);
-    } else {
-      window.location.reload();
-    }
+    if (lastActiveStatus !== 'idle') setStatus(lastActiveStatus);
+    else window.location.reload();
   };
 
-  // 3. Error Screen "Back" Handler (Go to the step BEFORE the one that failed)
   const handleErrorBack = () => {
-    // Determine where to go based on where we failed
     switch (lastActiveStatus) {
-      case 'phone-entry':
-        setStatus('id-verified');
-        break;
-      case 'otp-entry':
-        setStatus('phone-entry');
-        break;
-      case 'account-entry':
-        setStatus('phone-entry');
-        break;
-      case 'pin-setup':
-        setStatus('account-entry');
-        break;
-      default:
-        // Fallback for initialization errors
-        window.location.reload(); 
+      case 'phone-entry': setStatus('id-verified'); break;
+      case 'otp-entry': setStatus('phone-entry'); break;
+      case 'account-entry': setStatus('phone-entry'); break;
+      case 'pin-setup': setStatus('account-entry'); break;
+      default: window.location.reload(); 
     }
   };
 
@@ -307,12 +276,11 @@ export default function RegistrationFlow() {
       setStatus('checking');
       setLoadingMessage('Verifying Account...');
       try {
-        // --- Retrieve Telegram Data ---
         let initDataRaw: string | undefined;
         try {
           const params = retrieveLaunchParams();
           initDataRaw = typeof params.initDataRaw === 'string' ? params.initDataRaw : undefined;
-        } catch (e) { /* Ignore SDK error */ }
+        } catch (e) {}
 
         let tgUser = undefined as TelegramUser | undefined;
         let initSource: DebugDetails['initDataSource'];
@@ -320,38 +288,24 @@ export default function RegistrationFlow() {
         if (typeof window !== 'undefined') {
           const webApp = (window as any).Telegram?.WebApp;
           const unsafeUser = webApp?.initDataUnsafe?.user as UnsafeTelegramUser;
-          if (unsafeUser) {
-             tgUser = mapUnsafeUser(unsafeUser);
-             initSource = 'unsafe';
-          }
+          if (unsafeUser) { tgUser = mapUnsafeUser(unsafeUser); initSource = 'unsafe'; }
           initDataRaw = initDataRaw ?? webApp?.initData;
 
           if (!tgUser) {
             const urlInitData = getInitDataFromUrl();
             const parsed = parseUserFromInitDataString(urlInitData);
-            if (parsed) {
-              tgUser = parsed;
-              initSource = 'url';
-            }
+            if (parsed) { tgUser = parsed; initSource = 'url'; }
             initDataRaw = initDataRaw ?? urlInitData;
           }
         }
 
-        setDebugDetails({
-          user: tgUser,
-          initDataSource: initSource,
-          initDataRawPreview: initDataRaw ? `${initDataRaw.slice(0, 80)}...` : undefined,
-        });
+        setDebugDetails({ user: tgUser, initDataSource: initSource });
 
-        if (!tgUser) {
-          setStatus('invalid-environment');
-          return;
-        }
+        if (!tgUser) { setStatus('invalid-environment'); return; }
 
         setCurrentUser(tgUser);
         setInitDataRawString(initDataRaw);
 
-        // --- Step 1: Check ID ---
         const payload: CheckIdPayload = {
           allowed_financial_actions: ["ALL"],
           customer_profile: { avatar: "" },
@@ -371,7 +325,6 @@ export default function RegistrationFlow() {
         setStatus('id-verified');
 
       } catch (err: any) {
-        console.error("Initialization failed:", err);
         setErrorMessage(err.message || "Unknown error occurred");
         setStatus('error');
       }
@@ -382,7 +335,7 @@ export default function RegistrationFlow() {
 
   const handleContinueToPhone = () => setStatus('phone-entry');
 
-  // STEP 2: Phone -> Session -> SIM
+  // STEP 2: Phone -> Session (Get Device ID) -> SIM
   const handlePhoneSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser || !phoneNumber) return;
@@ -392,35 +345,38 @@ export default function RegistrationFlow() {
     try {
       // 1. Share Contact
       setLoadingMessage('Saving Contact Info...');
-      const contactPayload: ShareContactPayload = {
+      await authenticatedFetch('/api/v1/customers/share-contact', {
         phone_number: phoneNumber,
         telegram_id: currentUser.id
-      };
-      await authenticatedFetch('/api/v1/customers/share-contact', contactPayload);
+      });
 
-      // 2. Start Session
+      // 2. Start Session & CAPTURE BACKEND DEVICE ID
       setLoadingMessage('Initializing Secure Session...');
       const deviceInfo = await getDeviceInfo();
-      setCachedDeviceInfo(deviceInfo); 
-
-      const sessionPayload: DeviceSessionPayload = {
+      
+      const sessionRes = await authenticatedFetch('/api/v1/device-session-start', {
         device_info: deviceInfo,
         phone_number: phoneNumber,
         telegram_id: currentUser.id.toString()
-      };
+      });
       
-      const sessionRes = await authenticatedFetch('/api/v1/device-session-start', sessionPayload);
-      const newSessionId = sessionRes.data?.session_id || deviceInfo.device_id; 
-      setSessionId(newSessionId);
+      // *** EXTRACT IDS FROM RESPONSE ***
+      const returnedDeviceId = sessionRes.data?.device_info?.device_id;
+      const returnedSessionId = sessionRes.data?.registration_session_id;
+
+      if (!returnedDeviceId) throw new Error("Backend did not return a valid Device ID");
+
+      setVerifiedDeviceId(returnedDeviceId);
+      setSessionId(returnedSessionId || "");
+      setDeviceFingerprint(deviceInfo.fingerprint); // Keep client fingerprint for SIM check
 
       // 3. SIM Verify
       setLoadingMessage('Verifying Device Security...');
-      const simPayload: SimVerifyPayload = {
+      await authenticatedFetch('/api/v1/SIM-Verify', {
         device_fingerprint: deviceInfo.fingerprint,
         phone_number: phoneNumber,
         telegram_id: currentUser.id.toString()
-      };
-      await authenticatedFetch('/api/v1/SIM-Verify', simPayload);
+      });
 
       setStatus('otp-entry');
 
@@ -430,7 +386,7 @@ export default function RegistrationFlow() {
       } else {
         setErrorMessage(err.message);
       }
-      setLastActiveStatus('phone-entry'); // Save where we were
+      setLastActiveStatus('phone-entry');
       setStatus('error');
     }
   };
@@ -443,16 +399,15 @@ export default function RegistrationFlow() {
     setStatus('verifying-otp');
     setLoadingMessage('Verifying Code...');
     try {
-      const payload: VerifyCodePayload = {
+      await authenticatedFetch('/api/v1/verifyCode', {
         activation_code: activationCode,
         phone_number: phoneNumber,
         telegram_id: currentUser.id.toString()
-      };
-      await authenticatedFetch('/api/v1/verifyCode', payload);
+      });
       setStatus('account-entry');
     } catch (err: any) {
       setErrorMessage(err.message);
-      setLastActiveStatus('otp-entry'); // Save where we were
+      setLastActiveStatus('otp-entry');
       setStatus('error');
     }
   };
@@ -460,11 +415,10 @@ export default function RegistrationFlow() {
   const handleResendCode = async () => {
     if (!currentUser) return;
     try {
-      const payload: ResendCodePayload = {
+      await authenticatedFetch('/api/v1/resendCode', {
         phone_number: phoneNumber,
         telegram_id: currentUser.id.toString()
-      };
-      await authenticatedFetch('/api/v1/resendCode', payload);
+      });
       alert("Code resent successfully!");
     } catch (err: any) {
       alert("Failed to resend code: " + err.message);
@@ -474,19 +428,18 @@ export default function RegistrationFlow() {
   // STEP 4: Account Verify -> Product Validation
   const handleAccountSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!currentUser || !cachedDeviceInfo) return;
+    if (!currentUser || !verifiedDeviceId) return;
 
     setStatus('processing-customer');
     setLoadingMessage('Verifying Bank Account...');
     try {
-      // 1. Verify Customer
-      const customerPayload: VerifyCustomerPayload = {
+      // 1. Verify Customer (USING VERIFIED DEVICE ID)
+      const customerRes = await authenticatedFetch('/api/v1/verifyCustomer', {
         account_number: accountNumber,
-        device_id: cachedDeviceInfo.device_id,
+        device_id: verifiedDeviceId, // <--- Using ID from backend response
         phone_number: phoneNumber,
         telegram_id: currentUser.id.toString()
-      };
-      const customerRes = await authenticatedFetch('/api/v1/verifyCustomer', customerPayload);
+      });
       
       const custData = customerRes.data;
       if (!custData || !custData.customer_id || !custData.product_code) {
@@ -498,19 +451,18 @@ export default function RegistrationFlow() {
 
       // 2. Product Validation
       setLoadingMessage('Validating Product Eligibility...');
-      const productPayload: ProductValidationPayload = {
+      await authenticatedFetch('/api/v1/product-validation', {
         channel: "ussd",
-        customer_group: "noncorporate", 
+        customer_group: "noncorporate",
         product_code: custData.product_code,
         tier_group: "1"
-      };
-      await authenticatedFetch('/api/v1/product-validation', productPayload);
+      });
 
       setStatus('pin-setup');
 
     } catch (err: any) {
       setErrorMessage(err.message);
-      setLastActiveStatus('account-entry'); // Save where we were
+      setLastActiveStatus('account-entry');
       setStatus('error');
     }
   };
@@ -518,53 +470,44 @@ export default function RegistrationFlow() {
   // STEP 5: PIN Setup -> Final Registration
   const handlePinSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!currentUser || !cachedDeviceInfo || !pin) return;
-    
+    if (!currentUser || !verifiedDeviceId || !pin) return;
     if (pin.length < 4) { alert("PIN must be at least 4 digits"); return; }
 
     setStatus('registering-onepulse');
     setLoadingMessage('Finalizing Registration...');
 
     try {
-      const payload: OnePulseRegistrationPayload = {
+      await authenticatedFetch('/api/v1/onepulse-registration', {
         account_number: accountNumber,
         customer_id: customerId,
-        device_id: cachedDeviceInfo.device_id,
+        device_id: verifiedDeviceId, // <--- Using ID from backend response
         phone_number: phoneNumber,
         pin: pin,
         session_id: sessionId,
         telegram_id: currentUser.id.toString()
-      };
-
-      await authenticatedFetch('/api/v1/onepulse-registration', payload);
+      });
 
       setStatus('completed');
 
     } catch (err: any) {
       setErrorMessage(err.message);
-      setLastActiveStatus('pin-setup'); // Save where we were
+      setLastActiveStatus('pin-setup');
       setStatus('error');
     }
   };
 
   // --- UI RENDERERS ---
 
+  // Shared Input Styles for High Visibility
+  const inputStyle = "w-full px-4 py-3 rounded-xl border border-gray-400 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-blue-600 focus:border-transparent outline-none transition-all text-gray-900 placeholder-gray-500 font-medium";
+
   if (status === 'invalid-environment') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-6 text-center">
-        <div className="bg-yellow-100 p-4 rounded-full mb-4">
-          <svg className="w-8 h-8 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-        </div>
+        <div className="bg-yellow-100 p-4 rounded-full mb-4"><span className="text-2xl">⚠️</span></div>
         <h2 className="text-xl font-bold text-gray-900 mb-2">Unsupported Environment</h2>
-        <p className="text-gray-600 mb-6 max-w-xs mx-auto">
-          Please open this inside the Telegram App.
-        </p>
-        {debugDetails && (
-          <div className="mt-4 text-xs text-left text-gray-500 bg-gray-100 rounded-md p-4 w-full max-w-sm overflow-hidden">
-             <p>Source: {debugDetails.initDataSource ?? 'none'}</p>
-             <p>User: {debugDetails.user ? 'Detected' : 'Missing'}</p>
-          </div>
-        )}
+        <p className="text-gray-600 mb-6 max-w-xs mx-auto">Please open this inside the Telegram App.</p>
+        {debugDetails && <div className="mt-4 text-xs text-left text-gray-500 bg-gray-100 rounded-md p-4 w-full max-w-sm"><p>Source: {debugDetails.initDataSource ?? 'none'}</p><p>User: {debugDetails.user ? 'Detected' : 'Missing'}</p></div>}
       </div>
     );
   }
@@ -582,31 +525,15 @@ export default function RegistrationFlow() {
   if (status === 'error') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-red-50 p-6 text-center">
-        {/* Error Header with Back Button */}
         <div className="w-full max-w-sm relative">
-            <button 
-                onClick={handleErrorBack}
-                className="absolute left-0 top-0 p-2 text-red-700 hover:bg-red-100 rounded-full transition-colors"
-                aria-label="Go Back"
-            >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
-                </svg>
+            <button onClick={handleErrorBack} className="absolute left-0 top-0 p-2 text-red-700 hover:bg-red-100 rounded-full transition-colors" aria-label="Go Back">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" /></svg>
             </button>
         </div>
-
-        <div className="bg-red-100 p-4 rounded-full mb-4 mt-8">
-          <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-        </div>
+        <div className="bg-red-100 p-4 rounded-full mb-4 mt-8"><svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg></div>
         <h2 className="text-xl font-bold text-gray-900 mb-2">Connection Failed</h2>
         <p className="text-gray-600 mb-6 break-words max-w-xs mx-auto">{errorMessage}</p>
-        
-        <button 
-          onClick={handleRetry} 
-          className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-6 rounded-lg transition-colors"
-        >
-          Try Again
-        </button>
+        <button onClick={handleRetry} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-6 rounded-lg transition-colors">Try Again</button>
       </div>
     );
   }
@@ -615,23 +542,10 @@ export default function RegistrationFlow() {
   if (status === 'id-verified') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 animate-in fade-in duration-300">
-        <div className="bg-green-100 p-6 rounded-full mb-6">
-            <svg className="w-12 h-12 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
-            </svg>
-        </div>
-        
+        <div className="bg-green-100 p-6 rounded-full mb-6 text-green-600"><span className="text-4xl">✓</span></div>
         <h1 className="text-2xl font-bold text-gray-900 mb-2">ID Verified Successfully</h1>
-        <p className="text-gray-500 text-center mb-8 max-w-xs">
-          Your Telegram identity has been confirmed.
-        </p>
-
-        <button
-            onClick={handleContinueToPhone}
-            className="w-full max-w-sm bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg transform transition hover:scale-[1.02] active:scale-95"
-        >
-            Continue
-        </button>
+        <p className="text-gray-500 text-center mb-8 max-w-xs">Your Telegram identity has been confirmed.</p>
+        <button onClick={handleContinueToPhone} className="w-full max-w-sm bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg">Continue</button>
       </div>
     );
   }
@@ -641,13 +555,9 @@ export default function RegistrationFlow() {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 animate-in slide-in-from-right duration-300">
         <div className="w-full max-w-sm">
-          <ScreenHeader 
-            title="Share Contact" 
-            subtitle="Enter your phone number to complete registration."
-            onBack={handleBack} 
-          />
+          <ScreenHeader title="Share Contact" subtitle="Enter your phone number to complete registration." onBack={handleBack} />
           <form onSubmit={handlePhoneSubmit} className="space-y-4">
-            <input type="tel" placeholder="+254..." value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none" required />
+            <input type="tel" placeholder="+254..." value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} className={inputStyle} required />
             <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg">Next</button>
           </form>
         </div>
@@ -660,13 +570,9 @@ export default function RegistrationFlow() {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 animate-in slide-in-from-right duration-300">
         <div className="w-full max-w-sm">
-            <ScreenHeader 
-                title="Enter Code" 
-                subtitle={<>We sent an activation code to <br/><span className="font-semibold text-gray-800">{phoneNumber}</span></>}
-                onBack={handleBack} 
-            />
+            <ScreenHeader title="Enter Code" subtitle={<>We sent an activation code to <br/><span className="font-semibold text-gray-800">{phoneNumber}</span></>} onBack={handleBack} />
             <form onSubmit={handleOtpSubmit} className="space-y-6">
-                <input type="text" placeholder="000000" value={activationCode} onChange={(e) => setActivationCode(e.target.value)} className="w-full px-4 py-4 text-center text-2xl tracking-widest rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none" maxLength={6} required autoFocus />
+                <input type="text" placeholder="000000" value={activationCode} onChange={(e) => setActivationCode(e.target.value)} className={`${inputStyle} text-center text-2xl tracking-widest`} maxLength={6} required autoFocus />
                 <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg">Verify</button>
             </form>
             <button onClick={handleResendCode} className="w-full mt-6 text-sm text-blue-600 font-semibold hover:underline">Resend Code</button>
@@ -680,13 +586,9 @@ export default function RegistrationFlow() {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 animate-in slide-in-from-right duration-300">
         <div className="w-full max-w-sm">
-            <ScreenHeader 
-                title="Link Bank Account" 
-                subtitle="Enter your account number to finalize the setup."
-                onBack={handleBack} 
-            />
+            <ScreenHeader title="Link Bank Account" subtitle="Enter your account number to finalize the setup." onBack={handleBack} />
             <form onSubmit={handleAccountSubmit} className="space-y-4">
-                <input type="text" placeholder="Account Number" value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none" required autoFocus />
+                <input type="text" placeholder="Account Number" value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)} className={inputStyle} required autoFocus />
                 <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg">Link Account</button>
             </form>
         </div>
@@ -699,29 +601,10 @@ export default function RegistrationFlow() {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6 animate-in slide-in-from-right duration-300">
         <div className="w-full max-w-sm">
-            <ScreenHeader 
-                title="Set Your PIN" 
-                subtitle="Create a secure 4-digit PIN for your account."
-                onBack={handleBack} 
-            />
+            <ScreenHeader title="Set Your PIN" subtitle="Create a secure 4-digit PIN for your account." onBack={handleBack} />
             <form onSubmit={handlePinSubmit} className="space-y-6">
-                <input
-                    type="password"
-                    placeholder="Enter 4-digit PIN"
-                    value={pin}
-                    onChange={(e) => setPin(e.target.value.replace(/[^0-9]/g, '').slice(0, 4))}
-                    className="w-full px-4 py-4 text-center text-2xl tracking-widest rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none"
-                    maxLength={4}
-                    required
-                    autoFocus
-                />
-
-                <button
-                    type="submit"
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg transform transition hover:scale-[1.02] active:scale-95"
-                >
-                    Complete Registration
-                </button>
+                <input type="password" placeholder="Enter 4-digit PIN" value={pin} onChange={(e) => setPin(e.target.value.replace(/[^0-9]/g, '').slice(0, 4))} className={`${inputStyle} text-center text-2xl tracking-widest`} maxLength={4} required autoFocus />
+                <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg">Complete Registration</button>
             </form>
         </div>
       </div>
@@ -732,18 +615,10 @@ export default function RegistrationFlow() {
   if (status === 'completed') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-green-50 text-center p-6">
-        <div className="bg-green-100 p-4 rounded-full mb-4 animate-bounce">
-            <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-        </div>
+        <div className="bg-green-100 p-4 rounded-full mb-4 animate-bounce"><span className="text-4xl">✅</span></div>
         <h1 className="text-2xl font-bold text-gray-900">All Set!</h1>
         <p className="text-gray-600 mt-2">Registration successful.</p>
-        
-        <button 
-            onClick={() => alert("Go to Dashboard")} // Replace with router.push('/dashboard')
-            className="mt-8 bg-green-600 text-white px-8 py-3 rounded-full font-semibold shadow-lg"
-        >
-            Go to Dashboard
-        </button>
+        <button onClick={() => alert("Go to Dashboard")} className="mt-8 bg-green-600 text-white px-8 py-3 rounded-full font-semibold shadow-lg">Go to Dashboard</button>
       </div>
     );
   }
