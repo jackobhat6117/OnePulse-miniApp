@@ -499,10 +499,10 @@ export default function RegistrationFlow() {
       // 2. Product Validation
       setLoadingMessage('Validating Product Eligibility...');
       const productPayload: ProductValidationPayload = {
-        channel: "TELEGRAM",
-        customer_group: "DEFAULT", // Logic: Default or derived
+        channel: "ussd",
+        customer_group: "noncorporate", 
         product_code: custData.product_code,
-        tier_group: "DEFAULT"
+        tier_group: "1"
       };
       await authenticatedFetch('/api/v1/product-validation', productPayload);
 
