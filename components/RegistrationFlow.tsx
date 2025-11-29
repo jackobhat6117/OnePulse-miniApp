@@ -460,7 +460,7 @@ export default function RegistrationFlow() {
       // 2. Product Validation
       setLoadingMessage('Validating Product Eligibility...');
       const productPayload: ProductValidationPayload = {
-        channel: "telegram",
+        channel: "ussd",
         customer_group: "noncoroporate", 
         product_code: custData.product_code,
         tier_group: "1"
