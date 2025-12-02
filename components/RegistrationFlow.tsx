@@ -3,87 +3,8 @@
 import { useEffect, useState, useRef } from 'react';
 import { retrieveLaunchParams } from '@telegram-apps/sdk-react';
 import { getDeviceInfo, DeviceInfoPayload } from '@/utils/getDeviceInfo';
+import { CheckIdPayload, TelegramUser } from '@/types/user';
 
-// --- TYPES ---
-
-interface TelegramUser {
-  id: number;
-  firstName: string;
-  lastName?: string;
-  username?: string;
-  languageCode?: string;
-  photoUrl?: string;
-  isPremium?: boolean;
-}
-
-// --- API PAYLOAD INTERFACES ---
-
-interface CheckIdPayload {
-  allowed_financial_actions: string[];
-  customer_profile: { avatar: string };
-  first_name: string;
-  is_bot_user: boolean;
-  is_premium: boolean;
-  kyc_status: string;
-  language_code: string;
-  last_name: string;
-  phone_number: string;
-  registration_status: string;
-  telegram_id: number;
-  username: string;
-}
-
-interface ShareContactPayload {
-  phone_number: string;
-  telegram_id: number;
-}
-
-interface DeviceSessionPayload {
-  device_info: DeviceInfoPayload;
-  phone_number: string;
-  telegram_id: string;
-}
-
-interface SimVerifyPayload {
-  device_fingerprint: string;
-  phone_number: string;
-  telegram_id: string;
-}
-
-interface VerifyCodePayload {
-  activation_code: string;
-  phone_number: string;
-  telegram_id: string;
-}
-
-interface ResendCodePayload {
-  phone_number: string;
-  telegram_id: string;
-}
-
-interface VerifyCustomerPayload {
-  account_number: string;
-  device_id: string;
-  phone_number: string;
-  telegram_id: string;
-}
-
-interface ProductValidationPayload {
-  channel: string;
-  customer_group: string;
-  product_code: string;
-  tier_group: string;
-}
-
-interface OnePulseRegistrationPayload {
-  account_number: string;
-  customer_id: string;
-  device_id: string;
-  phone_number: string;
-  pin: string;
-  session_id: string;
-  telegram_id: string;
-}
 
 // --- APP STATUS ---
 
@@ -480,7 +401,7 @@ export default function RegistrationFlow() {
       await authenticatedFetch('/api/v1/onepulse-registration', {
         account_number: accountNumber,
         customer_id: customerId,
-        device_id: verifiedDeviceId, // <--- Using ID from backend response
+        device_id: verifiedDeviceId, 
         phone_number: phoneNumber,
         pin: pin,
         session_id: sessionId,
@@ -557,7 +478,7 @@ export default function RegistrationFlow() {
         <div className="w-full max-w-sm">
           <ScreenHeader title="Share Contact" subtitle="Enter your phone number to complete registration." onBack={handleBack} />
           <form onSubmit={handlePhoneSubmit} className="space-y-4">
-            <input type="tel" placeholder="+254..." value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} className={inputStyle} required />
+            <input type="tel" placeholder="+251..." value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} className={inputStyle} required />
             <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg">Next</button>
           </form>
         </div>

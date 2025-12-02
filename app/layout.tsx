@@ -5,6 +5,7 @@ import "./globals.css";
 import { TelegramInitializer } from "@/components/TelegramInitializer";
 
 
+
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],

@@ -12,6 +12,7 @@ export function TelegramInitializer({ children }: { children: React.ReactNode })
     const tryBootstrap = () => {
       if (typeof window === 'undefined') return false;
       const tg = (window as any).Telegram?.WebApp;
+      console.log("Telegram WebApp object:", tg);
       if (!tg) return false;
       tg.ready();
       tg.expand();

@@ -77,3 +77,21 @@ export interface VerifyCustomerPayload {
   phone_number: string;
   telegram_id: string;
 }
+
+
+export interface ProductValidationPayload {
+  channel: string;
+  customer_group: string;
+  product_code: string;
+  tier_group: string;
+}
+
+export interface OnePulseRegistrationPayload {
+  account_number: string;
+  customer_id: string;
+  device_id: string;
+  phone_number: string;
+  pin: string;
+  session_id: string;
+  telegram_id: string;
+}
