@@ -40,10 +40,10 @@ type DebugDetails = {
   user?: TelegramUser;
 };
 
-// --- CONSTANTS ---
+
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
 
-// --- HELPERS ---
+
 const mapUnsafeUser = (unsafeUser: UnsafeTelegramUser): TelegramUser | undefined => {
   if (!unsafeUser) return undefined;
   return {
@@ -83,7 +83,7 @@ const getInitDataFromUrl = (): string | undefined => {
   return undefined;
 };
 
-// --- UI COMPONENT: HEADER WITH BACK BUTTON ---
+
 const ScreenHeader = ({ title, subtitle, onBack }: { title: string, subtitle?: React.ReactNode, onBack?: () => void }) => (
   <div className="text-center mb-8 relative">
     {onBack && (
@@ -103,7 +103,7 @@ const ScreenHeader = ({ title, subtitle, onBack }: { title: string, subtitle?: R
   </div>
 );
 
-// --- MAIN COMPONENT ---
+
 
 export default function RegistrationFlow() {
   const [status, setStatus] = useState<AppStatus>('idle');
@@ -124,8 +124,8 @@ export default function RegistrationFlow() {
   
   // *** CRITICAL DATA: FROM BACKEND RESPONSE ***
   const [sessionId, setSessionId] = useState(''); 
-  const [verifiedDeviceId, setVerifiedDeviceId] = useState(''); // The DeviceID returned by backend
-  const [deviceFingerprint, setDeviceFingerprint] = useState(''); // Client fingerprint for SIM check
+  const [verifiedDeviceId, setVerifiedDeviceId] = useState(''); 
+  const [deviceFingerprint, setDeviceFingerprint] = useState(''); 
   
   const [customerId, setCustomerId] = useState('');
   const [productCode, setProductCode] = useState('');
@@ -281,7 +281,7 @@ export default function RegistrationFlow() {
         telegram_id: currentUser.id.toString()
       });
       
-      // *** EXTRACT IDS FROM RESPONSE ***
+
       const returnedDeviceId = sessionRes.data?.device_info?.device_id;
       const returnedSessionId = sessionRes.data?.registration_session_id;
 
@@ -289,7 +289,7 @@ export default function RegistrationFlow() {
 
       setVerifiedDeviceId(returnedDeviceId);
       setSessionId(returnedSessionId || "");
-      setDeviceFingerprint(deviceInfo.fingerprint); // Keep client fingerprint for SIM check
+      setDeviceFingerprint(deviceInfo.fingerprint); 
 
       // 3. SIM Verify
       setLoadingMessage('Verifying Device Security...');
@@ -357,7 +357,7 @@ export default function RegistrationFlow() {
       // 1. Verify Customer (USING VERIFIED DEVICE ID)
       const customerRes = await authenticatedFetch('/api/v1/verifyCustomer', {
         account_number: accountNumber,
-        device_id: verifiedDeviceId, // <--- Using ID from backend response
+        device_id: verifiedDeviceId, 
         phone_number: phoneNumber,
         telegram_id: currentUser.id.toString()
       });
@@ -417,7 +417,6 @@ export default function RegistrationFlow() {
     }
   };
 
-  // --- UI RENDERERS ---
 
   // Shared Input Styles for High Visibility
   const inputStyle = "w-full px-4 py-3 rounded-xl border border-gray-400 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-blue-600 focus:border-transparent outline-none transition-all text-gray-900 placeholder-gray-500 font-medium";
@@ -433,7 +432,7 @@ export default function RegistrationFlow() {
     );
   }
 
-  // Generic Loading
+  // Loading States
   if (['checking', 'processing-registration', 'verifying-otp', 'processing-customer', 'registering-onepulse'].includes(status)) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 text-gray-800">
