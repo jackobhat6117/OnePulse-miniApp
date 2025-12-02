@@ -80,8 +80,7 @@ export const getDeviceInfo = async (): Promise<DeviceInfoPayload> => {
   const osInfo = getOS(ua);
   const deviceId = getOrGenerateDeviceId();
   
-  // LOGIC FIX:
-  // navigator.maxTouchPoints can be undefined in some webviews.
+  
   // We use `> 0` to convert to boolean safely.
   const hasTouch = (navigator.maxTouchPoints || 0) > 0;
 
@@ -105,9 +104,7 @@ export const getDeviceInfo = async (): Promise<DeviceInfoPayload> => {
     screen_resolution: `${window.screen.width}x${window.screen.height}`,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     
-    // --- FIX ATTEMPT ---
     // Try sending 'true' temporarily. If this works, your backend has a bug 
-    // where it rejects 'false'. If it fails, revert to 'hasTouch'.
     //  touch_support: hasTouch,
     touch_support: true, 
     
