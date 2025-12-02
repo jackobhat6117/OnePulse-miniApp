@@ -1,4 +1,4 @@
-// src/utils/getDeviceInfo.ts
+
 
 export interface GeoLocation {
   city: string;
@@ -21,15 +21,14 @@ export interface DeviceInfoPayload {
   pixel_ratio: number;
   screen_resolution: string;
   timezone: string;
-  touch_support: boolean; // Keep as boolean
+  touch_support: boolean; 
   user_agent: string;
   viewport_height: number;
 }
 
-// ... (Keep getOrGenerateDeviceId and getOS functions exactly as they were) ...
-// Copy the helpers from the previous code if you overwrote them.
 
-// Helper to generate a random ID if one doesn't exist
+
+
 const getOrGenerateDeviceId = (): string => {
   if (typeof window === 'undefined') return '';
   let id = localStorage.getItem('device_id');
@@ -64,7 +63,7 @@ export const getDeviceInfo = async (): Promise<DeviceInfoPayload> => {
     
     // We try to fetch, but we CATCH failures so the app doesn't crash
     const res = await fetch('https://ipapi.co/json/', { signal: controller.signal })
-      .catch(() => null); // If network fails (CORS/Blocker), return null
+      .catch(() => null); 
       
     clearTimeout(timeoutId);
 
